@@ -33,7 +33,8 @@ Run the following command on your OpenWrt router:
 cd /tmp && \
 uclient-fetch -O - https://github.com/Segalmen/openwrt-custom/archive/refs/tags/v1.0.tar.gz | tar xz && \
 cd openwrt-custom-1.0 && \
-sh install.sh
+sh install.sh```
+
 The installer will:
 
 Install required packages
