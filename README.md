@@ -37,28 +37,24 @@ sh install.sh
 ```
 
 ### The installer will
-```
+
 - Install required packages
 - Copy all files to the correct locations
 - Enable the custom SQM script
 - Restart required services
-```
+
 
 ## Post-installation steps (IMPORTANT)
 
 After installation, you must configure SQM settings in LuCI:
 
-Go to Network → SQM QoS
+- Go to **Network → SQM QoS**
+- Configure:
+  - Interface (WAN)
+  - Download / Upload bandwidth
+  - Link layer adaptation / overhead
+- Review **Gaming_DSCP** options if enabled
 
-Configure:
-
-Interface (WAN)
-
-Download / Upload bandwidth
-
-Link layer adaptation / overhead
-
-Review Gaming_DSCP options if enabled
 
 ⚠️ The installer does not set bandwidth or overhead values automatically.
 
@@ -70,10 +66,8 @@ Review Gaming_DSCP options if enabled
 | sqm.config | /etc/config/sqm |
 | sqm.js | /www/luci-static/resources/view/network/ |
 
-Notes
+## Notes
 
-This project does not override existing firewall rules
-
-nftables rules are created dynamically and cleaned up properly
-
-Designed for users familiar with OpenWrt and SQM
+- This project does not override existing firewall rules
+- nftables rules are created dynamically and cleaned up properly
+- Designed for users familiar with OpenWrt and SQM
