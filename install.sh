@@ -1,6 +1,31 @@
 #!/bin/sh
 set -e
 
+echo "[*] Checking required packages"
+
+REQUIRED_PKGS="
+sqm-scripts
+kmod-sched-cake
+kmod-ifb
+kmod-nft-core
+kmod-nft-conntrack
+tc
+nftables
+ip-full
+"
+
+opkg update
+
+for pkg in $REQUIRED_PKGS; do
+    if ! opkg list-installed | grep -q "^$pkg "; then
+        echo "    Installing $pkg"
+        opkg install "$pkg"
+    else
+        echo "    $pkg already installed"
+    fi
+done
+
+
 echo "=== Gaming_DSCP OpenWrt installer ==="
 
 # --- SQM config ---
