@@ -53,8 +53,10 @@ After installation, you must configure SQM settings in LuCI:
   - Interface (WAN)
   - Download / Upload bandwidth
   - Link layer adaptation / overhead
-- Review **Gaming_DSCP** options if enabled
-
+- Verify that the **Gaming_DSCP** section appears in LuCI after installation
+- Gaming_DSCP becomes operational only when:
+  - SQM is enabled in *Basic Settings*
+  - **Seg_Layer_Cake.qos** is selected as the active SQM script
 
 ⚠️ The installer does not set bandwidth or overhead values automatically.
 
