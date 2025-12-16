@@ -1,2 +1,76 @@
-# openwrt-custom
-Custom SQM scripts and LuCI extensions for OpenWrt
+# Gaming_DSCP – SQM + CAKE + nftables (OpenWrt)
+
+Custom SQM setup for OpenWrt using **CAKE**, **DSCP**, and **nftables**,
+designed to improve latency and gaming traffic prioritization.
+
+This project provides:
+- A custom SQM script (`Seg_Layer_Cake.qos`)
+- nftables-based DSCP marking (IPv4 / IPv6)
+- Optional Gaming_DSCP logic
+- Automated installer with dependency handling
+- LuCI custom view
+
+Tested on **OpenWrt 24.10+**.
+
+---
+
+## Features
+
+- CAKE queue discipline for upload and download
+- DSCP restore via `ctinfo` (conntrack-based)
+- nftables table `inet sqm_dscp` for DSCP handling
+- IPv4 and IPv6 support
+- Clean setup and cleanup hooks
+- One-line installation on a fresh OpenWrt system
+
+---
+
+## Installation (one command)
+
+Run the following command on your OpenWrt router:
+
+```sh
+cd /tmp && \
+uclient-fetch -O - https://github.com/Segalmen/openwrt-custom/archive/refs/tags/v1.0.tar.gz | tar xz && \
+cd openwrt-custom-1.0 && \
+sh install.sh
+The installer will:
+
+Install required packages
+
+Copy all files to the correct locations
+
+Enable the custom SQM script
+
+Restart required services
+
+Post-installation steps (IMPORTANT)
+
+After installation, you must configure SQM settings in LuCI:
+
+Go to Network → SQM QoS
+
+Configure:
+
+Interface (WAN)
+
+Download / Upload bandwidth
+
+Link layer adaptation / overhead
+
+Review Gaming_DSCP options if enabled
+
+The installer does not set bandwidth or overhead values automatically.
+
+Files installed
+File	Destination
+Seg_Layer_Cake.qos	/usr/lib/sqm/
+sqm.config	/etc/config/sqm
+sqm.js	/www/luci-static/resources/view/network/
+Notes
+
+This project does not override existing firewall rules.
+
+nftables rules are created dynamically and cleaned up properly.
+
+Designed for users familiar with OpenWrt and SQM.
