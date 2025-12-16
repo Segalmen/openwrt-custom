@@ -21,6 +21,7 @@ Tested on **OpenWrt 24.10+**.
 - nftables table `inet sqm_dscp` for DSCP handling
 - IPv4 and IPv6 support
 - Clean setup and cleanup hooks
+- DSCP marking is applied in postrouting and restored on ingress using conntrack
 - One-line installation on a fresh OpenWrt system
 
 ---
@@ -53,7 +54,7 @@ After installation, you must configure SQM settings in LuCI:
   - Interface (WAN)
   - Download / Upload bandwidth
   - Link layer adaptation / overhead
-- Verify that the **Gaming_DSCP** section appears in LuCI after installation
+- Verify that the **Gaming_DSCP** section appears in LuCI after installation (visibility only)
 - Gaming_DSCP becomes operational only when:
   - SQM is enabled in *Basic Settings*
   - **Seg_Layer_Cake.qos** is selected as the active SQM script
@@ -73,3 +74,5 @@ After installation, you must configure SQM settings in LuCI:
 - This project does not override existing firewall rules
 - nftables rules are created dynamically and cleaned up properly
 - Designed for users familiar with OpenWrt and SQM
+- The nftables table `sqm_dscp` is created and removed dynamically with SQM start/stop
+
