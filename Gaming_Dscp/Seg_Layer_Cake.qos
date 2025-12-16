@@ -1,0 +1,301 @@
+#!/bin/sh
+set -x
+# Cero3 / layer_cake.qos modifié
+# - QDISC = CAKE
+# - Utilise ctinfo pour restaurer DSCP en ingress
+# - Utilise nftables (table inet sqm_dscp) pour stocker DSCP -> conntrack mark
+#
+# Le reste des options (diffserv4, dual-srchost, dual-dsthost, nat, etc.)
+# vient de /etc/config/sqm via EQDISC_OPTS / IQDISC_OPTS.
+
+. ${SQM_LIB_DIR}/defaults.sh
+QDISC=cake
+
+# egress() : upload (LAN -> WAN, sur $IFACE)
+egress() {
+    # Nettoyer l'ancienne qdisc
+    SILENT=1 $TC qdisc del dev $IFACE root 2>/dev/null
+
+    # Ajouter CAKE en root
+    $TC qdisc add dev $IFACE root $( get_stab_string ) cake \
+        bandwidth ${UPLINK}kbit $( get_cake_lla_string ) \
+        ${EGRESS_CAKE_OPTS} ${EQDISC_OPTS}
+
+    # (Optionnel) Si tu veux aussi restaurer DSCP depuis conntrack sur l'upload,
+    # décommente ces lignes :
+    #
+    # $TC filter add dev $IFACE parent root protocol all matchall \
+    #     action ctinfo dscp 63 128
+}
+
+# ingress() : download (WAN -> LAN, via IFB $DEV)
+ingress() {
+
+    # Supprimer l'ancien qdisc ingress sur $IFACE (WAN)
+    SILENT=1 $TC qdisc del dev $IFACE handle ffff: ingress 2>/dev/null
+    $TC qdisc add dev $IFACE handle ffff: ingress
+
+    # Supprimer l'ancien CAKE sur l'IFB
+    SILENT=1 $TC qdisc del dev $DEV root 2>/dev/null
+
+    # Options pour ignorer / laver DSCP si demandé dans sqm
+    [ "$IGNORE_DSCP_INGRESS" -eq "1" ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS besteffort"
+    [ "$ZERO_DSCP_INGRESS"  -eq "1" ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS wash"
+
+    # Ajouter CAKE sur l'IFB (download shaping)
+    $TC qdisc add dev $DEV root $( get_stab_string ) cake \
+        bandwidth ${DOWNLINK}kbit $( get_cake_lla_string ) \
+        ${INGRESS_CAKE_OPTS} ${IQDISC_OPTS}
+
+    # Monter l'IFB
+    $IP link set dev $DEV up
+
+    # Rediriger le trafic ingress (WAN -> IFB) ET restaurer DSCP depuis conntrack
+    # ctinfo ira lire le mark conntrack (rempli par nftables) et remettre le DSCP
+    $TC filter add dev $IFACE parent ffff: protocol all matchall \
+        action ctinfo dscp 63 128 \
+        mirred egress redirect dev $DEV
+}
+########################################
+#        nftables : sqm_dscp          #
+########################################
+# On essaie d'identifier automatiquement la section SQM correspondant à $IFACE
+SQM_SECTION="$(uci -q show sqm | sed -n "s/^\(sqm\.[^.]*\)\.interface='$IFACE'$/\1/p" | head -n1)"
+
+# Si on ne trouve rien (cas rare), on tombe par défaut sur la 1ère section "queue"
+[ -z "$SQM_SECTION" ] && SQM_SECTION="sqm.@queue[0]"
+
+
+setup_nftables() {
+    # Relire à chaque fois les paramètres UCI de la section SQM liée à $IFACE
+    GAMING_IP="$(uci -q get ${SQM_SECTION}.gaming_ip || echo '192.168.2.157')"
+    [ -z "$GAMING_IP" ] && GAMING_IP="192.168.2.157"
+    GAMING_IP_SET="{ $(echo "$GAMING_IP" | sed 's/,/, /g') }"
+
+    # IPv6 gaming
+    GAMING_IP6="$(uci -q get ${SQM_SECTION}.gaming_ip6 || echo '2a02:168:c01b::157')"
+    [ -z "$GAMING_IP6" ] && GAMING_IP6="2a02:168:c01b::157"
+    GAMING_IP6_SET="{ $(echo "$GAMING_IP6" | sed 's/,/, /g') }"
+
+    GAMING_DSCP="$(uci -q get ${SQM_SECTION}.gaming_dscp || echo 'ef')"
+    GAMING_DSCP="$(printf '%s\n' "$GAMING_DSCP" | awk '{print tolower($0)}')"
+
+    GAMING_UDP_PORTS="$(uci -q get ${SQM_SECTION}.gaming_udp_ports || echo '3659,3074,3478-3480,10000-45000')"
+    [ -z "$GAMING_UDP_PORTS" ] && GAMING_UDP_PORTS="3659,3074,3478-3480,10000-45000"
+
+    GAMING_TCP_PORTS="$(uci -q get ${SQM_SECTION}.gaming_tcp_ports || echo '')"
+
+    BROWSING_ENABLE="$(uci -q get ${SQM_SECTION}.browsing_enable || echo '0')"
+
+    BROWSING_DSCP="$(uci -q get ${SQM_SECTION}.browsing_dscp || echo 'cs1')"
+    BROWSING_DSCP="$(printf '%s\n' "$BROWSING_DSCP" | awk '{print tolower($0)}')"
+
+    BROWSING_TCP_PORTS="$(uci -q get ${SQM_SECTION}.browsing_tcp_ports || echo '80,8080,443')"
+    BROWSING_UDP_PORTS="$(uci -q get ${SQM_SECTION}.browsing_udp_ports || echo '443')"
+
+    GAMING_BULK_ENABLE="$(uci -q get ${SQM_SECTION}.gaming_bulk_enable || echo '0')"
+    GAMING_BULK_DSCRAW="$(uci -q get ${SQM_SECTION}.gaming_bulk_dscp || echo 'cs1')"
+    GAMING_BULK_DSCRAW="$(printf '%s\n' "$GAMING_BULK_DSCRAW" | awk '{print tolower($0)}')"
+    GAMING_BULK_DSCP="$GAMING_BULK_DSCRAW"
+
+    # Nettoyer proprement l'ancienne table (si elle existe)
+    nft delete table inet sqm_dscp >/dev/null 2>&1
+
+
+    #########################
+    #  HEREDOC -> vers nft  #
+    #########################
+    nft -f - << EOF
+add table inet sqm_dscp
+
+add chain inet sqm_dscp sqm_dscp {
+    type filter hook postrouting priority mangle;
+    policy accept;
+}
+
+# Gaming UDP IPv4
+add rule inet sqm_dscp sqm_dscp \
+    ip saddr $GAMING_IP_SET udp sport { $GAMING_UDP_PORTS } \
+    counter ip dscp set $GAMING_DSCP comment "Gaming UDP UP $GAMING_DSCP (sqm)"
+
+add rule inet sqm_dscp sqm_dscp \
+    ip daddr $GAMING_IP_SET udp dport { $GAMING_UDP_PORTS } \
+    counter ip dscp set $GAMING_DSCP comment "Gaming UDP DOWN $GAMING_DSCP (sqm)"
+
+# Gaming UDP IPv6
+add rule inet sqm_dscp sqm_dscp \
+    ip6 saddr $GAMING_IP6_SET udp sport { $GAMING_UDP_PORTS } \
+    counter ip6 dscp set $GAMING_DSCP comment "Gaming UDP UP v6 $GAMING_DSCP (sqm)"
+
+add rule inet sqm_dscp sqm_dscp \
+    ip6 daddr $GAMING_IP6_SET udp dport { $GAMING_UDP_PORTS } \
+    counter ip6 dscp set $GAMING_DSCP comment "Gaming UDP DOWN v6 $GAMING_DSCP (sqm)"
+EOF
+    #########################
+    #  FIN HEREDOC         #
+    #  à partir d'ici :    #
+    #  commandes shell     #
+    #########################
+
+    # --- Gaming TCP (si ports définis) ---
+    if [ -n "$GAMING_TCP_PORTS" ]; then
+        nft add rule inet sqm_dscp sqm_dscp \
+            ip saddr $GAMING_IP_SET tcp sport { $GAMING_TCP_PORTS } \
+            counter ip dscp set $GAMING_DSCP \
+            comment "\"Gaming TCP UP $GAMING_DSCP (sqm)\""
+
+        nft add rule inet sqm_dscp sqm_dscp \
+            ip daddr $GAMING_IP_SET tcp dport { $GAMING_TCP_PORTS } \
+            counter ip dscp set $GAMING_DSCP \
+            comment "\"Gaming TCP DOWN $GAMING_DSCP (sqm)\""
+
+        nft add rule inet sqm_dscp sqm_dscp \
+            ip6 saddr $GAMING_IP6_SET tcp sport { $GAMING_TCP_PORTS } \
+            counter ip6 dscp set $GAMING_DSCP \
+            comment "\"Gaming TCP UP v6 $GAMING_DSCP (sqm)\""
+
+        nft add rule inet sqm_dscp sqm_dscp \
+            ip6 daddr $GAMING_IP6_SET tcp dport { $GAMING_TCP_PORTS } \
+            counter ip6 dscp set $GAMING_DSCP \
+            comment "\"Gaming TCP DOWN v6 $GAMING_DSCP (sqm)\""
+    fi
+
+    # --- Browsing 80/443 (global) ---
+    if [ "$BROWSING_ENABLE" = "1" ]; then
+        # TCP : IPv4 + IPv6
+        if [ -n "$BROWSING_TCP_PORTS" ]; then
+            nft add rule inet sqm_dscp sqm_dscp \
+                tcp dport { $BROWSING_TCP_PORTS } \
+                counter ip dscp set $BROWSING_DSCP \
+                comment "\"Browsing TCP v4 -> $BROWSING_DSCP (sqm)\""
+
+            nft add rule inet sqm_dscp sqm_dscp \
+                tcp dport { $BROWSING_TCP_PORTS } \
+                counter ip6 dscp set $BROWSING_DSCP \
+                comment "\"Browsing TCP v6 -> $BROWSING_DSCP (sqm)\""
+        fi
+
+        # UDP : IPv4 + IPv6
+        if [ -n "$BROWSING_UDP_PORTS" ]; then
+            nft add rule inet sqm_dscp sqm_dscp \
+                udp dport { $BROWSING_UDP_PORTS } \
+                counter ip dscp set $BROWSING_DSCP \
+                comment "\"Browsing UDP v4 -> $BROWSING_DSCP (sqm)\""
+
+            nft add rule inet sqm_dscp sqm_dscp \
+                udp dport { $BROWSING_UDP_PORTS } \
+                counter ip6 dscp set $BROWSING_DSCP \
+                comment "\"Browsing UDP v6 -> $BROWSING_DSCP (sqm)\""
+        fi
+    fi
+
+    # --- PS5 bulk (HTTP/HTTPS) : gaming IP sur ports browsing, DSCP dédié ---
+    if [ "$GAMING_BULK_ENABLE" = "1" ]; then
+        # IPv4 TCP
+        if [ -n "$BROWSING_TCP_PORTS" ]; then
+            nft add rule inet sqm_dscp sqm_dscp \
+                ip saddr $GAMING_IP_SET tcp dport { $BROWSING_TCP_PORTS } \
+                counter ip dscp set $GAMING_BULK_DSCP \
+                comment "\"Gaming BULK TCP v4 UP -> $GAMING_BULK_DSCP (sqm)\""
+
+            nft add rule inet sqm_dscp sqm_dscp \
+                ip daddr $GAMING_IP_SET tcp dport { $BROWSING_TCP_PORTS } \
+                counter ip dscp set $GAMING_BULK_DSCP \
+                comment "\"Gaming BULK TCP v4 DOWN -> $GAMING_BULK_DSCP (sqm)\""
+        fi
+
+        # IPv4 UDP
+        if [ -n "$BROWSING_UDP_PORTS" ]; then
+            nft add rule inet sqm_dscp sqm_dscp \
+                ip saddr $GAMING_IP_SET udp dport { $BROWSING_UDP_PORTS } \
+                counter ip dscp set $GAMING_BULK_DSCP \
+                comment "\"Gaming BULK UDP v4 UP -> $GAMING_BULK_DSCP (sqm)\""
+
+            nft add rule inet sqm_dscp sqm_dscp \
+                ip daddr $GAMING_IP_SET udp dport { $BROWSING_UDP_PORTS } \
+                counter ip dscp set $GAMING_BULK_DSCP \
+                comment "\"Gaming BULK UDP v4 DOWN -> $GAMING_BULK_DSCP (sqm)\""
+        fi
+
+        # IPv6 TCP
+        if [ -n "$BROWSING_TCP_PORTS" ]; then
+            nft add rule inet sqm_dscp sqm_dscp \
+                ip6 saddr $GAMING_IP6_SET tcp dport { $BROWSING_TCP_PORTS } \
+                counter ip6 dscp set $GAMING_BULK_DSCP \
+                comment "\"Gaming BULK TCP v6 UP -> $GAMING_BULK_DSCP (sqm)\""
+
+            nft add rule inet sqm_dscp sqm_dscp \
+                ip6 daddr $GAMING_IP6_SET tcp dport { $BROWSING_TCP_PORTS } \
+                counter ip6 dscp set $GAMING_BULK_DSCP \
+                comment "\"Gaming BULK TCP v6 DOWN -> $GAMING_BULK_DSCP (sqm)\""
+        fi
+
+        # IPv6 UDP
+        if [ -n "$BROWSING_UDP_PORTS" ]; then
+            nft add rule inet sqm_dscp sqm_dscp \
+                ip6 saddr $GAMING_IP6_SET udp dport { $BROWSING_UDP_PORTS } \
+                counter ip6 dscp set $GAMING_BULK_DSCP \
+                comment "\"Gaming BULK UDP v6 UP -> $GAMING_BULK_DSCP (sqm)\""
+
+            nft add rule inet sqm_dscp sqm_dscp \
+                ip6 daddr $GAMING_IP6_SET udp dport { $BROWSING_UDP_PORTS } \
+                counter ip6 dscp set $GAMING_BULK_DSCP \
+                comment "\"Gaming BULK UDP v6 DOWN -> $GAMING_BULK_DSCP (sqm)\""
+        fi
+    fi
+
+    # --- Store DSCP -> CTMARK (toujours en dernier) ---
+    nft 'add rule inet sqm_dscp sqm_dscp ct mark set ip dscp or 0x80 counter comment "Store DSCP IPv4 into ctmark"'
+    nft 'add rule inet sqm_dscp sqm_dscp ct mark set ip6 dscp or 0x80 counter comment "Store DSCP IPv6 into ctmark"'
+}
+
+cleanup_nftables() {
+    nft delete table inet sqm_dscp >/dev/null 2>&1 || true
+}
+
+
+########################################
+#     Hooks utilisés par sqm-scripts   #
+########################################
+
+sqm_prepare_script() {
+    # Chargement des modules et vérification CAKE
+    do_modules
+    verify_qdisc $QDISC "cake" || return 1
+
+    # Préparer la table nft pour store DSCP -> conntrack
+    setup_nftables
+}
+
+sqm_cleanup_script() {
+    # Nettoyage de la table nft sqm_dscp
+    cleanup_nftables
+}
+
+sqm_cleanup() {
+    local silent
+    silent=${1:-0}
+
+    # Annuler les commandes iptables accumulées par sqm (legacy)
+    ipt_log_rewind
+
+    # Supprimer l'IFB utilisé par CAKE si présent
+    [ -n "$CUR_IFB" ] || return 0
+
+    SILENT=$silent $IP link delete dev ${CUR_IFB} type ifb 2>/dev/null
+    sqm_debug "${0}: ${CUR_IFB} interface deleted"
+
+    # Nettoyage spécifique nftables
+    sqm_cleanup_script
+}
+
+sqm_stop() {
+    # Supprimer ingress sur $IFACE si utilisé
+    [ "${DOWNLINK}" -ne 0 ] && $TC qdisc del dev $IFACE ingress 2>/dev/null
+
+    # Supprimer CAKE en root sur $IFACE (upload)
+    $TC qdisc del dev $IFACE root 2>/dev/null
+
+    # Cleanup global (IFB + nftables)
+    sqm_cleanup
+}
