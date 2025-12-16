@@ -44,8 +44,17 @@ echo "[*] Installing LuCI custom SQM view"
 mkdir -p /www/luci-static/resources/view/network
 cp Gaming_Dscp/sqm.js /www/luci-static/resources/view/network/sqm.js
 
+echo "[*] Preconfiguring SQM"
+
+uci set sqm.@queue[0].enabled='1'
+uci set sqm.@queue[0].script='Seg_Layer_Cake.qos'
+uci commit sqm
+
 # --- Restart services ---
 [ -x /etc/init.d/rpcd ] && /etc/init.d/rpcd restart
 [ -x /etc/init.d/uhttpd ] && /etc/init.d/uhttpd restart
 
 echo "=== Installation completed successfully ==="
+echo "=== SQM is enabled with Seg_Layer_Cake.qos ==="
+echo "=== Please configure bandwidth, overhead and Gaming_DSCP settings in LuCI ==="
+
