@@ -14,6 +14,14 @@ Tested on **OpenWrt 24.10+**.
 
 ---
 
+## Requirements
+
+T- ested on OpenWrt 24.10+.
+-  Older versions have not been tested.
+-  luci-app-sqm must be installed and enabled
+
+---
+
 ## Features
 
 - CAKE queue discipline for upload and download
@@ -71,8 +79,10 @@ After installation, you must configure SQM settings in LuCI:
 
 ## Notes
 
-- This project does not override existing firewall rules
-- nftables rules are created dynamically and cleaned up properly
-- Designed for users familiar with OpenWrt and SQM
-- The nftables table `sqm_dscp` is created and removed dynamically with SQM start/stop
+- This project does not override existing firewall rules.
+- nftables rules are created dynamically and cleaned up properly.
+- Designed for users familiar with OpenWrt and SQM.
+- The nftables table `sqm_dscp` is created and removed dynamically on SQM start/stop.
+- The original LuCI SQM view is backed up as `sqm.js.orig` during installation.
+
 

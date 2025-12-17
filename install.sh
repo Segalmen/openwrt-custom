@@ -4,6 +4,7 @@ set -e
 echo "[*] Checking required packages"
 
 REQUIRED_PKGS="
+luci-app-sqm
 sqm-scripts
 kmod-sched-cake
 kmod-ifb
@@ -31,7 +32,12 @@ echo "=== Gaming_DSCP OpenWrt installer ==="
 # --- SQM config ---
 echo "[*] Installing SQM configuration"
 mkdir -p /etc/config
-cp Gaming_Dscp/sqm.config /etc/config/sqm
+if [ ! -f /etc/config/sqm ]; then
+    echo "[*] Installing default SQM configuration"
+    cp Gaming_Dscp/sqm.config /etc/config/sqm
+else
+    echo "[*] SQM config already exists, keeping current configuration"
+fi
 
 # --- SQM script ---
 echo "[*] Installing custom SQM script"
@@ -42,6 +48,14 @@ chmod +x /usr/lib/sqm/Seg_Layer_Cake.qos
 # --- LuCI custom JS ---
 echo "[*] Installing LuCI custom SQM view"
 mkdir -p /www/luci-static/resources/view/network
+
+if [ -f /www/luci-static/resources/view/network/sqm.js ] && \
+   [ ! -f /www/luci-static/resources/view/network/sqm.js.orig ]; then
+    echo "    Backing up original sqm.js"
+    cp /www/luci-static/resources/view/network/sqm.js \
+       /www/luci-static/resources/view/network/sqm.js.orig
+fi
+
 cp Gaming_Dscp/sqm.js /www/luci-static/resources/view/network/sqm.js
 
 echo "[*] Preconfiguring SQM"

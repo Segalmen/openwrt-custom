@@ -1,80 +1,82 @@
 #!/bin/sh
 set -x
-# Cero3 / layer_cake.qos modifié
+# Cero3 / modified layer_cake.qos
 # - QDISC = CAKE
-# - Utilise ctinfo pour restaurer DSCP en ingress
-# - Utilise nftables (table inet sqm_dscp) pour stocker DSCP -> conntrack mark
+# - Uses ctinfo to restore DSCP on ingress
+# - Uses nftables (inet table sqm_dscp) to store DSCP into conntrack mark
 #
-# Le reste des options (diffserv4, dual-srchost, dual-dsthost, nat, etc.)
-# vient de /etc/config/sqm via EQDISC_OPTS / IQDISC_OPTS.
+# All remaining options (diffserv4, dual-srchost, dual-dsthost, nat, etc.)
+# are inherited from /etc/config/sqm via EQDISC_OPTS / IQDISC_OPTS.
 
 . ${SQM_LIB_DIR}/defaults.sh
 QDISC=cake
 
-# egress() : upload (LAN -> WAN, sur $IFACE)
+# egress(): upload (LAN -> WAN, on $IFACE)
 egress() {
-    # Nettoyer l'ancienne qdisc
+    # Remove existing root qdisc
     SILENT=1 $TC qdisc del dev $IFACE root 2>/dev/null
 
-    # Ajouter CAKE en root
+    # Attach CAKE as root qdisc
     $TC qdisc add dev $IFACE root $( get_stab_string ) cake \
         bandwidth ${UPLINK}kbit $( get_cake_lla_string ) \
         ${EGRESS_CAKE_OPTS} ${EQDISC_OPTS}
 
-    # (Optionnel) Si tu veux aussi restaurer DSCP depuis conntrack sur l'upload,
-    # décommente ces lignes :
+    # (Optional) Restore DSCP from conntrack on upload as well
+    # Uncomment if needed:
     #
     # $TC filter add dev $IFACE parent root protocol all matchall \
     #     action ctinfo dscp 63 128
 }
 
-# ingress() : download (WAN -> LAN, via IFB $DEV)
+# ingress(): download (WAN -> LAN, via IFB $DEV)
 ingress() {
 
-    # Supprimer l'ancien qdisc ingress sur $IFACE (WAN)
+    # Remove existing ingress qdisc on WAN interface
     SILENT=1 $TC qdisc del dev $IFACE handle ffff: ingress 2>/dev/null
     $TC qdisc add dev $IFACE handle ffff: ingress
 
-    # Supprimer l'ancien CAKE sur l'IFB
+    # Remove existing CAKE qdisc on IFB
     SILENT=1 $TC qdisc del dev $DEV root 2>/dev/null
 
-    # Options pour ignorer / laver DSCP si demandé dans sqm
+    # Apply DSCP ignore / wash options if requested by SQM
     [ "$IGNORE_DSCP_INGRESS" -eq "1" ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS besteffort"
     [ "$ZERO_DSCP_INGRESS"  -eq "1" ] && INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS wash"
 
-    # Ajouter CAKE sur l'IFB (download shaping)
+    # Attach CAKE on IFB for download shaping
     $TC qdisc add dev $DEV root $( get_stab_string ) cake \
         bandwidth ${DOWNLINK}kbit $( get_cake_lla_string ) \
         ${INGRESS_CAKE_OPTS} ${IQDISC_OPTS}
 
-    # Monter l'IFB
+    # Bring IFB interface up
     $IP link set dev $DEV up
 
-    # Rediriger le trafic ingress (WAN -> IFB) ET restaurer DSCP depuis conntrack
-    # ctinfo ira lire le mark conntrack (rempli par nftables) et remettre le DSCP
+    # Redirect ingress traffic (WAN -> IFB) and restore DSCP from conntrack
+    # ctinfo reads the conntrack mark (populated by nftables) and restores DSCP
     $TC filter add dev $IFACE parent ffff: protocol all matchall \
         action ctinfo dscp 63 128 \
         mirred egress redirect dev $DEV
 }
+
 ########################################
-#        nftables : sqm_dscp          #
+#        nftables: sqm_dscp            #
 ########################################
-# On essaie d'identifier automatiquement la section SQM correspondant à $IFACE
+
+# Try to automatically identify the SQM section matching $IFACE
 SQM_SECTION="$(uci -q show sqm | sed -n "s/^\(sqm\.[^.]*\)\.interface='$IFACE'$/\1/p" | head -n1)"
 
-# Si on ne trouve rien (cas rare), on tombe par défaut sur la 1ère section "queue"
+# Fallback to the first queue section if none is found (rare case)
 [ -z "$SQM_SECTION" ] && SQM_SECTION="sqm.@queue[0]"
 
-
 setup_nftables() {
-    # Relire à chaque fois les paramètres UCI de la section SQM liée à $IFACE
-    GAMING_IP="$(uci -q get ${SQM_SECTION}.gaming_ip || echo '192.168.2.157')"
-    [ -z "$GAMING_IP" ] && GAMING_IP="192.168.2.157"
+    # Reload UCI parameters for the SQM section bound to $IFACE
+
+    GAMING_IP="$(uci -q get ${SQM_SECTION}.gaming_ip || echo '192.168.1.100')"
+    [ -z "$GAMING_IP" ] && GAMING_IP="192.168.1.100"
     GAMING_IP_SET="{ $(echo "$GAMING_IP" | sed 's/,/, /g') }"
 
-    # IPv6 gaming
-    GAMING_IP6="$(uci -q get ${SQM_SECTION}.gaming_ip6 || echo '2a02:168:c01b::157')"
-    [ -z "$GAMING_IP6" ] && GAMING_IP6="2a02:168:c01b::157"
+    # Gaming IPv6
+    GAMING_IP6="$(uci -q get ${SQM_SECTION}.gaming_ip6 || echo '2001:db8::100')"
+    [ -z "$GAMING_IP6" ] && GAMING_IP6="2001:db8::100"
     GAMING_IP6_SET="{ $(echo "$GAMING_IP6" | sed 's/,/, /g') }"
 
     GAMING_DSCP="$(uci -q get ${SQM_SECTION}.gaming_dscp || echo 'ef')"
@@ -98,13 +100,12 @@ setup_nftables() {
     GAMING_BULK_DSCRAW="$(printf '%s\n' "$GAMING_BULK_DSCRAW" | awk '{print tolower($0)}')"
     GAMING_BULK_DSCP="$GAMING_BULK_DSCRAW"
 
-    # Nettoyer proprement l'ancienne table (si elle existe)
+    # Clean up any existing sqm_dscp table
     nft delete table inet sqm_dscp >/dev/null 2>&1
 
-
     #########################
-    #  HEREDOC -> vers nft  #
-    #########################
+	#  HEREDOC -> nft      #
+	#########################
     nft -f - << EOF
 add table inet sqm_dscp
 
@@ -132,12 +133,12 @@ add rule inet sqm_dscp sqm_dscp \
     counter ip6 dscp set $GAMING_DSCP comment "Gaming UDP DOWN v6 $GAMING_DSCP (sqm)"
 EOF
     #########################
-    #  FIN HEREDOC         #
-    #  à partir d'ici :    #
-    #  commandes shell     #
-    #########################
+	#  END HEREDOC         #
+	#  From here on:       #
+	#  shell commands      #
+	#########################
 
-    # --- Gaming TCP (si ports définis) ---
+    # --- Gaming TCP  ---
     if [ -n "$GAMING_TCP_PORTS" ]; then
         nft add rule inet sqm_dscp sqm_dscp \
             ip saddr $GAMING_IP_SET tcp sport { $GAMING_TCP_PORTS } \
@@ -189,7 +190,7 @@ EOF
         fi
     fi
 
-    # --- PS5 bulk (HTTP/HTTPS) : gaming IP sur ports browsing, DSCP dédié ---
+    # --- PS5 bulk (HTTP/HTTPS) : gaming IP ports browsing, DSCP ---
     if [ "$GAMING_BULK_ENABLE" = "1" ]; then
         # IPv4 TCP
         if [ -n "$BROWSING_TCP_PORTS" ]; then
@@ -244,7 +245,7 @@ EOF
         fi
     fi
 
-    # --- Store DSCP -> CTMARK (toujours en dernier) ---
+    # --- Store DSCP -> CTMARK ---
     nft 'add rule inet sqm_dscp sqm_dscp ct mark set ip dscp or 0x80 counter comment "Store DSCP IPv4 into ctmark"'
     nft 'add rule inet sqm_dscp sqm_dscp ct mark set ip6 dscp or 0x80 counter comment "Store DSCP IPv6 into ctmark"'
 }
@@ -254,21 +255,21 @@ cleanup_nftables() {
 }
 
 
-########################################
-#     Hooks utilisés par sqm-scripts   #
-########################################
+	########################################
+	#     Hooks used by sqm-scripts   #
+	########################################
 
 sqm_prepare_script() {
-    # Chargement des modules et vérification CAKE
+    # Load required modules and verify CAKE availability
     do_modules
     verify_qdisc $QDISC "cake" || return 1
 
-    # Préparer la table nft pour store DSCP -> conntrack
+    # Prepare nftables table to store DSCP into conntrack
     setup_nftables
 }
 
 sqm_cleanup_script() {
-    # Nettoyage de la table nft sqm_dscp
+    # Clean up nftables sqm_dscp table
     cleanup_nftables
 }
 
@@ -276,26 +277,28 @@ sqm_cleanup() {
     local silent
     silent=${1:-0}
 
-    # Annuler les commandes iptables accumulées par sqm (legacy)
+    # Revert any legacy iptables commands accumulated by SQM
     ipt_log_rewind
 
-    # Supprimer l'IFB utilisé par CAKE si présent
+    # Remove IFB interface used by CAKE if present
     [ -n "$CUR_IFB" ] || return 0
 
     SILENT=$silent $IP link delete dev ${CUR_IFB} type ifb 2>/dev/null
     sqm_debug "${0}: ${CUR_IFB} interface deleted"
 
-    # Nettoyage spécifique nftables
+    # nftables-specific cleanup
     sqm_cleanup_script
 }
 
+
 sqm_stop() {
-    # Supprimer ingress sur $IFACE si utilisé
+    # Remove ingress qdisc on $IFACE if used
     [ "${DOWNLINK}" -ne 0 ] && $TC qdisc del dev $IFACE ingress 2>/dev/null
 
-    # Supprimer CAKE en root sur $IFACE (upload)
+    # Remove CAKE root qdisc on $IFACE (upload)
     $TC qdisc del dev $IFACE root 2>/dev/null
 
-    # Cleanup global (IFB + nftables)
+    # Global cleanup (IFB + nftables)
     sqm_cleanup
 }
+
