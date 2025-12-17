@@ -10,13 +10,11 @@ This project provides:
 - Automated installer with dependency handling
 - LuCI custom view
 
-Tested on **OpenWrt 24.10+**.
-
 ---
 
 ## Requirements
 
-T- ested on OpenWrt 24.10+.
+-  Tested on OpenWrt 24.10+.
 -  Older versions have not been tested.
 -  luci-app-sqm must be installed and enabled
 
@@ -78,7 +76,8 @@ After installation, you must configure SQM settings in LuCI:
 | sqm.js | /www/luci-static/resources/view/network/ |
 
 ## Notes
-
+- Gaming_DSCP does not require manual DiffServ configuration in LuCI.
+  When using Seg_Layer_Cake.qos, CAKE automatically operates in DiffServ mode and honors DSCP markings.
 - This project does not override existing firewall rules.
 - nftables rules are created dynamically and cleaned up properly.
 - Designed for users familiar with OpenWrt and SQM.

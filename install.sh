@@ -9,7 +9,6 @@ sqm-scripts
 kmod-sched-cake
 kmod-ifb
 kmod-nft-core
-kmod-nft-conntrack
 tc
 nftables
 ip-full
