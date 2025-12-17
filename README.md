@@ -85,4 +85,31 @@ After installation, you must configure SQM settings in LuCI:
 - The nftables table `sqm_dscp` is created and removed dynamically on SQM start/stop.
 - The original LuCI SQM view is backed up as `sqm.js.orig` during installation.
 
+## Uninstallation
+
+To remove the Gaming_DSCP setup:
+
+Disable SQM in LuCI (**Network → SQM QoS**)
+
+Restore the original LuCI SQM view (if needed):
+
+```sh
+cp /www/luci-static/resources/view/network/sqm.js.orig \
+   /www/luci-static/resources/view/network/sqm.js
+```
+
+Remove the custom SQM script:
+
+```sh
+rm /usr/lib/sqm/Seg_Layer_Cake.qos
+```
+
+Restart LuCI services:
+
+```sh
+/etc/init.d/uhttpd restart
+/etc/init.d/rpcd restart
+```
+
+
 
