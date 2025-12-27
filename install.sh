@@ -25,6 +25,20 @@ for pkg in $REQUIRED_PKGS; do
     fi
 done
 
+echo "[*] Installing LuCI DSCP Connections menu"
+
+mkdir -p /usr/libexec/rpcd
+mkdir -p /usr/share/luci/menu.d
+mkdir -p /usr/share/rpcd/acl.d
+mkdir -p /www/luci-static/resources/view/dscp
+
+cp connections/rpcd/luci.dscp        /usr/libexec/rpcd/
+cp connections/menu/*.json           /usr/share/luci/menu.d/
+cp connections/acl/*.json            /usr/share/rpcd/acl.d/
+cp connections/view/*.js             /www/luci-static/resources/view/dscp/
+
+chmod +x /usr/libexec/rpcd/luci.dscp
+
 
 echo "=== Gaming_DSCP OpenWrt installer ==="
 

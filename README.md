@@ -32,6 +32,46 @@ This project provides:
 
 ---
 
+## DSCP Connections (LuCI)
+
+This project also installs a **real-time DSCP Connections view** in LuCI.
+
+It provides:
+- Live conntrack-based connection monitoring
+- IPv4 and IPv6 visibility
+- Source / Destination IP + Port
+- DSCP class decoding (CS0–CS7, AFxx, EF)
+- Real-time PPS / BPS statistics
+- Sorting and filtering
+- Designed for gaming traffic analysis
+
+Location in LuCI:
+- **Network → DSCP → Connections**
+
+This view allows you to:
+- Verify that gaming traffic is correctly marked (CS4 / EF / etc.)
+- Instantly see which servers your console or PC is connected to
+- Validate CAKE DiffServ behavior in real time
+
+---
+
+### How DSCP Connections works (technical overview)
+
+The DSCP Connections view reads active connections directly from  
+`/proc/net/nf_conntrack` via a lightweight `rpcd` backend.
+
+DSCP values are extracted from conntrack marks and decoded in real time.  
+Traffic is not intercepted, altered, or proxied — this view is purely
+observational and has **zero impact on performance**.
+
+The view is designed to:
+- Validate DSCP marking correctness
+- Observe real-time traffic behavior
+- Identify remote servers used by games or applications
+
+
+---
+
 ## Installation (one command)
 
 Run the following command on your OpenWrt router:
@@ -53,6 +93,7 @@ sh install.sh
 
 ## Post-installation steps (IMPORTANT)
 
+
 After installation, you must configure SQM settings in LuCI:
 
 - Go to **Network → SQM QoS**
@@ -67,13 +108,37 @@ After installation, you must configure SQM settings in LuCI:
 
 ⚠️ The installer does not set bandwidth or overhead values automatically.
 
+### DSCP Connections (LuCI)
+
+DSCP Connections is a later addition to the project, focused on real-time visibility and validation rather than traffic shaping.
+
+After installation, a **DSCP Connections** menu is available in LuCI:
+
+- Go to **Network → DSCP → Connections**
+- This view is read-only and does not require any configuration
+- It works independently from SQM and Gaming_DSCP
+
+You can use it to:
+- Verify DSCP markings applied to live traffic
+- Observe real-time connections (IPv4 / IPv6)
+- Identify game servers and traffic classes
+- Validate CAKE DiffServ behavior
+
+No bandwidth, interface, or firewall configuration is required.
+
+
 ## Files installed
 
-| File | Destination |
-|------|------------|
+| Component | Destination |
+|---------|-------------|
 | Seg_Layer_Cake.qos | /usr/lib/sqm/ |
 | sqm.config | /etc/config/sqm |
-| sqm.js | /www/luci-static/resources/view/network/ |
+| sqm.js (custom SQM LuCI view) | /www/luci-static/resources/view/network/ |
+| DSCP Connections view | /www/luci-static/resources/view/dscp/ |
+| rpcd backend (luci.dscp) | /usr/libexec/rpcd/ |
+| LuCI menu entry | /usr/share/luci/menu.d/ |
+| LuCI ACL rules | /usr/share/rpcd/acl.d/ |
+
 
 ## Notes
 - Gaming_DSCP does not require manual DiffServ configuration in LuCI.
@@ -109,6 +174,26 @@ Restart LuCI services:
 /etc/init.d/uhttpd restart
 /etc/init.d/rpcd restart
 ```
+### Optional: Remove DSCP Connections view
+
+To completely remove the DSCP Connections LuCI view:
+
+```sh
+rm -f /www/luci-static/resources/view/dscp/connections.js
+rm -f /usr/libexec/rpcd/luci.dscp
+rm -f /usr/share/luci/menu.d/luci-app-dscp.json
+rm -f /usr/share/rpcd/acl.d/luci-app-dscp.json
+```
+
+Restart LuCI services:
+
+```sh
+/etc/init.d/uhttpd restart
+/etc/init.d/rpcd restart
+```
+## This does not affect SQM, CAKE, or nftables rules.
+
+
 
 
 

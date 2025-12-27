@@ -1,0 +1,10 @@
+{
+    "luci-app-dscp": {
+        "description": "Grant access to DSCP Connections view",
+        "read": {
+            "ubus": {
+                "luci.dscp": [ "getConntrackDSCP" ]
+            }
+        }
+    }
+}
