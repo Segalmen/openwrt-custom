@@ -12,11 +12,33 @@ This project provides:
 
 ---
 
+All required dependencies are handled automatically by the installer.
+
 ## Requirements
 
--  Tested on OpenWrt 24.10+.
--  Older versions have not been tested.
--  luci-app-sqm must be installed and enabled
+### Supported system
+- OpenWrt **24.10 or newer**
+- Earlier versions may work but are **not supported nor tested**
+
+### Required packages
+
+The following packages are required for full functionality  
+(all are automatically installed by `install.sh`):
+
+- `luci-app-sqm` – SQM LuCI interface
+- `sqm-scripts` – SQM framework
+- `kmod-sched-cake` – CAKE queue discipline
+- `kmod-ifb` – IFB support (for ingress shaping if used)
+- `nftables` – DSCP marking and classification
+- `kmod-nft-core` – nftables kernel support
+- `tc` – traffic control utilities
+- `ip-full` – advanced IP tooling
+- `lua` – required for rpcd backend
+- `luci-lib-jsonc` – JSON handling for LuCI / rpcd
+
+### Permissions
+- Root access on the router is required
+- `rpcd` and `uhttpd` services must be running
 
 ---
 

@@ -12,6 +12,8 @@ kmod-nft-core
 tc
 nftables
 ip-full
+lua
+luci-lib-jsonc
 "
 
 opkg update
