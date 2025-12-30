@@ -174,24 +174,54 @@ No bandwidth, interface, or firewall configuration is required.
 
 ## Uninstallation
 
+⚠️ Important
+
+This project creates nftables rules dynamically via SQM lifecycle hooks.
+Before removing any files, SQM must be disabled or stopped, otherwise
+DSCP rules may remain active.
+
+Step 1: Disable SQM
+
+Disable SQM in LuCI (Network → SQM QoS):
+
+Uncheck Enable this SQM instance
+
+Click Save & Apply
+
+—or from CLI—
+
+```sh
+uci set sqm.@queue[0].enabled='0'
+uci commit sqm
+/etc/init.d/sqm stop
+```
+
+Stopping SQM ensures that:
+
+CAKE qdiscs are removed
+
+IFB interfaces are cleaned up
+
+the inet sqm_dscp nftables table is deleted correctly
+
+
 To remove the DSCP policy setup:
 
-Disable SQM in LuCI (**Network → SQM QoS**)
+Step 2: Restore the original LuCI SQM view (optional)
 
-Restore the original LuCI SQM view (if needed):
+If you want to restore the stock LuCI SQM interface:
 
 ```sh
 cp /www/luci-static/resources/view/network/sqm.js.orig \
    /www/luci-static/resources/view/network/sqm.js
 ```
 
-Remove the custom SQM script:
+Step 3: Remove the custom SQM script:
 
 ```sh
 rm /usr/lib/sqm/Seg_Layer_Cake.qos
 ```
-
-Restart LuCI services:
+Step 4: Restart LuCI services:
 
 ```sh
 /etc/init.d/uhttpd restart
@@ -214,4 +244,12 @@ Restart LuCI services:
 /etc/init.d/uhttpd restart
 /etc/init.d/rpcd restart
 ```
-## This does not affect SQM, CAKE, or nftables rules.
+
+## Notes
+
+Removing DSCP Connections does not affect SQM, CAKE, or nftables
+once SQM has been stopped
+
+No firewall rules are modified outside of SQM lifecycle
+
+The system is restored to a clean OpenWrt state
