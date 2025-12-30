@@ -10,6 +10,7 @@ kmod-sched-cake
 kmod-ifb
 kmod-nft-core
 tc
+kmod-sched-ctinfo
 nftables
 ip-full
 lua
