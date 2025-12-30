@@ -101,8 +101,8 @@ Run the following command on your OpenWrt router:
 
 ```sh
 cd /tmp && \
-uclient-fetch -O - https://github.com/Segalmen/openwrt-custom/archive/refs/tags/v1.0.tar.gz | tar xz && \
-cd openwrt-custom-1.0 && \
+uclient-fetch -O - https://github.com/Segalmen/openwrt-custom/archive/refs/heads/main.tar.gz | tar xz && \
+cd openwrt-custom-main && \
 sh install.sh
 ```
 
