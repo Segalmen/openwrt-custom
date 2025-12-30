@@ -5,62 +5,62 @@ tasks.push(L.resolveDefault(this.handleGetHelpText(scripts[i].name,scriptHelpTbl
 let m,s,o;m=new form.Map('sqm',_('Smart Queue Management'));m.description=_("With <abbr title=\"Smart Queue Management\">SQM</abbr> you "+"can enable traffic shaping, better mixing (Fair Queueing),"+" active queue length management (AQM) "+" and prioritisation on one "+"network interface.");s=m.section(form.TypedSection,'queue',_('Queues'));s.tab("tab_basic",_("Basic Settings"));s.tab("tab_qdisc",_("Queue Discipline"));s.tab("tab_linklayer",_("Link Layer Adaptation"));	    /*      
      * Gaming tab (PS5 / DSCP / Ports / Browsing)
      */
-    s.tab("tab_gaming", _("Gaming & DSCP"));
+    s.tab("tab_gaming", _("DSCP Policies"));
 
-    // Gaming device IPv4 address(es) (e.g. PS5, PC)
-	o = s.taboption("tab_gaming", form.Value, "gaming_ip", _("Gaming IPv4 address(es)"));
+    // Gaming device IPv4 address(es) (e.g. Console , PC)
+	o = s.taboption("tab_gaming", form.Value, "gaming_ip", _("Priority device IPv4 address(es)"));
 	o.placeholder = "192.168.1.100,192.168.1.101";
 	o.rmempty     = true;
-	o.description = _("One or several IPv4 addresses of your gaming device (e.g. PS5, PC), separated by commas.");
+	o.description = _("One or more IPv4 addresses of latency-sensitive devices (e.g. Console, PC, VoiP, streaming, real-time), separated by commas.");
 
-    // Gaming device IPv6 address(es) (e.g. PS5)
-	o = s.taboption("tab_gaming", form.Value, "gaming_ip6", _("Gaming IPv6 address(es)"));
+    // Gaming device IPv6 address(es) (e.g. Console , PC)
+	o = s.taboption("tab_gaming", form.Value, "gaming_ip6", _("Priority device IPv6 address(es)"));
 	o.placeholder = "2001:db8::100,2001:db8::101";
 	o.rmempty     = true;
-	o.description = _("One or several IPv6 addresses of your gaming device (e.g. PS5), separated by commas.");
+	o.description = _("One or more IPv6 address(es) or prefix(es) of latency-sensitive devices (e.g. Console, PC, VoiP, streaming, real-time), separated by commas.");
 
     // --- Gaming BULK traffic (PS5 downloads via HTTP/HTTPS) ---
     o = s.taboption("tab_gaming", form.Flag, "gaming_bulk_enable",
-        _("Enable gaming bulk class"));
+        _("Enable bulk traffic class"));
     o.default     = o.disabled;
     o.rmempty     = false;
-    o.description = _("If enabled, gaming device HTTP/HTTPS traffic (downloads, updates) " +
+    o.description = _("If enabled, HTTP/HTTPS bulk traffic (downloads, updates) from priority devices " +
                       "will be marked with a separate, lower-priority DSCP value.");
 
     o = s.taboption("tab_gaming", form.ListValue, "gaming_bulk_dscp",
-        _("Gaming bulk DSCP"));
+        _("Bulk traffic DSCP"));
     o.value("cs1",  "CS1 (background / bulk)");
     o.value("af11", "AF11 (bulk but not lowest priority)");
     o.value("cs0",  "CS0 (default)");
     o.default     = "cs1";
     o.depends("gaming_bulk_enable", "1");
     o.rmempty     = true;
-    o.description = _("DSCP value used for gaming device bulk traffic.");
+    o.description = _("DSCP value used for device bulk traffic.");
 
     // DSCP for gaming traffic
-    o = s.taboption("tab_gaming", form.ListValue, "gaming_dscp", _("Gaming DSCP"));
+    o = s.taboption("tab_gaming", form.ListValue, "gaming_dscp", _("Priority traffic DSCP"));
     o.value("ef",  "EF (Expedited Forwarding - highest priority)");
     o.value("cs4", "CS4 (High Priority)");
     o.value("af41","AF41 (Interactive)");
     o.value("cs0", "CS0 (Default)");
     o.default     = "ef";
     o.rmempty     = false;
-    o.description = _("DSCP value applied to gaming UDP/TCP traffic.");
+    o.description = _("DSCP value applied to latency-sensitive UDP/TCP traffic.");
 
     // Gaming UDP ports
-    o = s.taboption("tab_gaming", form.Value, "gaming_udp_ports", _("Gaming UDP ports"));
+    o = s.taboption("tab_gaming", form.Value, "gaming_udp_ports", _("Priority UDP ports"));
     o.placeholder = "3659,3074,3478-3480,10000-45000";
     o.rmempty     = true;
-    o.description = _("Comma-separated UDP ports or port ranges used by games.");
+    o.description = _("Comma-separated UDP ports or port ranges used by latency-sensitive applications.");
 
     // Gaming TCP ports (optional)
-    o = s.taboption("tab_gaming", form.Value, "gaming_tcp_ports", _("Gaming TCP ports"));
+    o = s.taboption("tab_gaming", form.Value, "gaming_tcp_ports", _("Priority TCP ports"));
     o.placeholder = "3659,3074";
     o.rmempty     = true;
-    o.description = _("Optional: TCP ports used by games or gaming services.");
+    o.description = _("Optional: TCP ports used by latency-sensitive applications or services.");
 
     // -------- Browsing traffic --------
-    o = s.taboption("tab_gaming", form.Flag, "browsing_enable", _("Enable browsing DSCP"));
+    o = s.taboption("tab_gaming", form.Flag, "browsing_enable", _("Enable web traffic Classification"));
     o.default     = o.disabled;
     o.rmempty     = false;
     o.description = _("If enabled, web browsing traffic will be marked with a specific DSCP.");
