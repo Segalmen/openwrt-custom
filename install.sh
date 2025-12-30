@@ -8,10 +8,11 @@ luci-app-sqm
 sqm-scripts
 kmod-sched-cake
 kmod-ifb
-kmod-nft-core
-tc
 kmod-sched-ctinfo
+kmod-nf-conntrack
+kmod-nft-core
 nftables
+tc
 ip-full
 lua
 luci-lib-jsonc
