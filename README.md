@@ -1,12 +1,12 @@
-# Gaming_DSCP – SQM + CAKE + nftables (OpenWrt)
+# DSCP Policies for SQM (Latency-sensitive traffic) – OpenWrt
 
 Custom SQM setup for OpenWrt using **CAKE**, **DSCP**, and **nftables**,  
-designed to improve latency and gaming traffic prioritization.
+designed to improve latency-sensitive traffic prioritization using DSCP.
 
 This project provides:
 - A custom SQM script (`Seg_Layer_Cake.qos`)
 - nftables-based DSCP marking (IPv4 / IPv6)
-- Optional Gaming_DSCP logic
+- Optional DSCP policy logic for latency-sensitive and bulk traffic
 - Automated installer with dependency handling
 - LuCI custom view
 
@@ -22,13 +22,14 @@ All required dependencies are handled automatically by the installer.
 
 ### Required packages
 
-The following packages are required for full functionality  
+The following packages are required for full functionality
 (all are automatically installed by `install.sh`):
 
 - `luci-app-sqm` – SQM LuCI interface
 - `sqm-scripts` – SQM framework
 - `kmod-sched-cake` – CAKE queue discipline
-- `kmod-ifb` – IFB support (for ingress shaping if used)
+- `kmod-ifb` – IFB support (for ingress shaping)
+- `kmod-sched-ctinfo` – TC ctinfo action (DSCP restore from conntrack on ingress)
 - `nftables` – DSCP marking and classification
 - `kmod-nft-core` – nftables kernel support
 - `tc` – traffic control utilities
@@ -65,13 +66,13 @@ It provides:
 - DSCP class decoding (CS0–CS7, AFxx, EF)
 - Real-time PPS / BPS statistics
 - Sorting and filtering
-- Designed for gaming traffic analysis
+- Designed for analysis of latency-sensitive traffic
 
 Location in LuCI:
 - **Network → DSCP → Connections**
 
 This view allows you to:
-- Verify that gaming traffic is correctly marked (CS4 / EF / etc.)
+- Verify that latency-sensitive traffic is correctly marked (CS4 / EF / etc.)
 - Instantly see which servers your console or PC is connected to
 - Validate CAKE DiffServ behavior in real time
 
@@ -123,8 +124,8 @@ After installation, you must configure SQM settings in LuCI:
   - Interface (WAN)
   - Download / Upload bandwidth
   - Link layer adaptation / overhead
-- Verify that the **Gaming_DSCP** section appears in LuCI after installation (visibility only)
-- Gaming_DSCP becomes operational only when:
+- Verify that the DSCP Policies section appears in LuCI after installation
+- DSCP policy logic becomes operational only when:
   - SQM is enabled in *Basic Settings*
   - **Seg_Layer_Cake.qos** is selected as the active SQM script
 
@@ -138,12 +139,12 @@ After installation, a **DSCP Connections** menu is available in LuCI:
 
 - Go to **Network → DSCP → Connections**
 - This view is read-only and does not require any configuration
-- It works independently from SQM and Gaming_DSCP
+- It works independently from SQM and DSCP policy logic
 
 You can use it to:
 - Verify DSCP markings applied to live traffic
 - Observe real-time connections (IPv4 / IPv6)
-- Identify game servers and traffic classes
+- Identify remote servers used by applications or services
 - Validate CAKE DiffServ behavior
 
 No bandwidth, interface, or firewall configuration is required.
@@ -163,7 +164,7 @@ No bandwidth, interface, or firewall configuration is required.
 
 
 ## Notes
-- Gaming_DSCP does not require manual DiffServ configuration in LuCI.
+- DSCP policy logic does not require manual DiffServ configuration in LuCI.
   When using Seg_Layer_Cake.qos, CAKE automatically operates in DiffServ mode and honors DSCP markings.
 - This project does not override existing firewall rules.
 - nftables rules are created dynamically and cleaned up properly.
@@ -173,7 +174,7 @@ No bandwidth, interface, or firewall configuration is required.
 
 ## Uninstallation
 
-To remove the Gaming_DSCP setup:
+To remove the DSCP policy setup:
 
 Disable SQM in LuCI (**Network → SQM QoS**)
 
@@ -214,8 +215,3 @@ Restart LuCI services:
 /etc/init.d/rpcd restart
 ```
 ## This does not affect SQM, CAKE, or nftables rules.
-
-
-
-
-
