@@ -1,6 +1,32 @@
 #!/bin/sh
 set -e
 
+# --- Package manager detection ---
+if command -v apk >/dev/null; then
+    PKG_MGR="apk"
+    pkg_update() { apk update; }
+    pkg_install() { apk add "$@"; }
+    pkg_installed() { apk info -e "$1" >/dev/null 2>&1; }
+else
+    PKG_MGR="opkg"
+    pkg_update() { opkg update; }
+    pkg_install() { opkg install "$@"; }
+    pkg_installed() { opkg list-installed | grep -q "^$1 "; }
+fi
+
+echo "[*] Using package manager: $PKG_MGR"
+
+if [ "$PKG_MGR" = "apk" ]; then
+    PKG_TC="tc-full"
+else
+    PKG_TC="tc"
+fi
+
+if [ "$PKG_MGR" = "apk" ]; then
+    echo "[!] APK detected: OpenWrt 25.12+"
+fi
+
+
 echo "[*] Checking required packages"
 
 REQUIRED_PKGS="
@@ -12,22 +38,24 @@ kmod-sched-ctinfo
 kmod-nf-conntrack
 kmod-nft-core
 nftables
-tc
+$PKG_TC
 ip-full
 lua
 luci-lib-jsonc
 "
 
-opkg update
+
+pkg_update
 
 for pkg in $REQUIRED_PKGS; do
-    if ! opkg list-installed | grep -q "^$pkg "; then
+    if ! pkg_installed "$pkg"; then
         echo "    Installing $pkg"
-        opkg install "$pkg"
+        pkg_install "$pkg"
     else
         echo "    $pkg already installed"
     fi
 done
+
 
 echo "[*] Installing LuCI DSCP Connections menu"
 
