@@ -1,3 +1,7 @@
+This project extends the standard OpenWrt SQM framework with
+advanced DSCP classification policies implemented through
+nftables and integrated into the LuCI interface.
+
 # DSCP Policies for SQM (Latency-sensitive traffic) – OpenWrt
 
 Custom SQM setup for OpenWrt using **CAKE**, **DSCP**, and **nftables**,  
@@ -9,6 +13,26 @@ This project provides:
 - Optional DSCP policy logic for latency-sensitive and bulk traffic
 - Automated installer with dependency handling
 - LuCI custom view
+## DSCP Policies (LuCI)
+
+The custom SQM interface adds a **DSCP Policies** tab in LuCI.
+
+Available options include:
+
+### Multi-Queue Support
+Enable CAKE multi-queue mode for hardware with multiple CPU cores or NIC queues.
+
+### Priority UDP Classification
+Mark latency-sensitive UDP traffic (e.g. gaming, VoIP).
+
+### Priority TCP Classification
+Mark latency-sensitive TCP traffic (optional).
+
+### Browsing Classification
+Optionally classify web browsing traffic.
+
+### Bulk Traffic Classification
+Mark large downloads from priority devices with a lower DSCP value.
 
 ---
 
@@ -46,12 +70,42 @@ The following packages are required for full functionality
 ## Features
 
 - CAKE queue discipline for upload and download
-- DSCP restore via `ctinfo` (conntrack-based)
-- nftables table `inet sqm_dscp` for DSCP handling
+- Optional **CAKE multi-queue (cake_mq)** support for multi-core hardware
+- Optional **DSCP restore via conntrack (ctinfo)**
+- nftables-based DSCP marking (IPv4 / IPv6)
+- Early DSCP classification using **prerouting hook**
+- Separate **UDP and TCP priority classification**
+- Optional **web browsing traffic classification**
+- Optional **bulk traffic classification**
 - IPv4 and IPv6 support
+- Automatic SQM lifecycle integration
 - Clean setup and cleanup hooks
-- DSCP marking is applied in postrouting and restored on ingress using conntrack
-- One-line installation on a fresh OpenWrt system
+- Automatic dependency installation using **opkg or apk**
+
+---
+
+## DSCP processing pipeline
+
+Traffic classification follows this pipeline:
+
+nftables prerouting → DSCP mark (download)  
+nftables postrouting → DSCP mark (upload)  
+
+↓
+
+(optional) DSCP stored in conntrack mark  
+
+↓
+
+(optional) ctinfo restores DSCP on ingress  
+
+↓
+
+CAKE diffserv classification
+
+This ensures that download traffic is correctly classified
+before IFB redirection, improving CAKE behaviour for
+latency-sensitive traffic such as gaming or VoIP.
 
 ---
 
@@ -97,12 +151,22 @@ The view is designed to:
 
 ## Installation (one command)
 
+### Package manager compatibility
+
+The installer automatically detects the package manager used by the system.
+
+- **OpenWrt ≤ 24.x** → uses `opkg`
+- **OpenWrt ≥ 25.x** → uses `apk`
+
+The installer adapts automatically and installs all required dependencies
+using the appropriate package manager.
+
 Run the following command on your OpenWrt router:
 
 ```sh
 cd /tmp && \
-uclient-fetch -O - https://github.com/Segalmen/openwrt-custom/archive/refs/heads/main.tar.gz | tar xz && \
-cd openwrt-custom-main && \
+uclient-fetch -O - https://github.com/Segalmen/openwrt-custom/archive/refs/tags/v1.0.tar.gz | tar xz && \
+cd openwrt-custom-1.0 && \
 sh install.sh
 ```
 
