@@ -25,9 +25,13 @@ fi
 QDISC=cake
 
 # egress(): upload (LAN -> WAN, on $IFACE)
-egress() {
-	local qdisc
-    qdisc=$(select_cake $IFACE)
+	egress() {
+		local qdisc
+		if [ "$ENABLE_MQ" = "1" ]; then
+		qdisc="cake_mq"
+	else
+		qdisc="cake"
+	fi
 	
     # Remove existing root qdisc
     SILENT=1 $TC qdisc del dev $IFACE root 2>/dev/null
