@@ -103,11 +103,51 @@ fi
 
 cp Gaming_Dscp/sqm.js /www/luci-static/resources/view/network/sqm.js
 
+# --- WAN auto-detection ---
+detect_wan() {
+
+    WAN_DEV="$(uci -q get network.wan.device)"
+
+    if [ -z "$WAN_DEV" ]; then
+        WAN_DEV="$(uci -q get network.wan.ifname)"
+    fi
+
+    if [ -z "$WAN_DEV" ]; then
+        WAN_DEV="$(ip route | awk '/default/ {print $5; exit}')"
+    fi
+
+    echo "$WAN_DEV"
+}
+
+echo "[*] Detecting WAN interface"
+
+WAN_IFACE="$(detect_wan)"
+
+if [ -z "$WAN_IFACE" ]; then
+    echo "[!] Unable to detect WAN interface, defaulting to eth1"
+    WAN_IFACE="eth1"
+fi
+
+echo "[*] WAN detected: $WAN_IFACE"
+
 echo "[*] Preconfiguring SQM"
 
+uci set sqm.@queue[0].interface="$WAN_IFACE"
 uci set sqm.@queue[0].enabled='1'
 uci set sqm.@queue[0].script='Seg_Layer_Cake.qos'
 uci commit sqm
+
+echo "[*] Current default route:"
+ip route | grep default
+
+sleep 1
+
+echo "[*] Restarting SQM service"
+
+if [ -x /etc/init.d/sqm ]; then
+    /etc/init.d/sqm enable
+    /etc/init.d/sqm restart
+fi
 
 # --- Restart services ---
 [ -x /etc/init.d/rpcd ] && /etc/init.d/rpcd restart
@@ -115,5 +155,4 @@ uci commit sqm
 
 echo "=== Installation completed successfully ==="
 echo "=== SQM is enabled with Seg_Layer_Cake.qos ==="
-echo "=== Please configure bandwidth, overhead and Gaming_DSCP settings in LuCI ==="
-
+echo "=== Please configure bandwidth, overhead and DSCP Policies settings in LuCI ==="
