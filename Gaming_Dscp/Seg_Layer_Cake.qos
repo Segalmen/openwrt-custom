@@ -15,6 +15,9 @@ SQM_SECTION="$(uci -q show sqm | sed -n "s/^\(sqm\.[^.]*\)\.interface='$IFACE'$/
 ENABLE_MQ="$(uci -q get ${SQM_SECTION}.enable_mq)"
 [ -z "$ENABLE_MQ" ] && ENABLE_MQ="1"
 
+# 🔥 add ENABLE_MQ
+USE_MQ="$ENABLE_MQ"
+
 if [ "$ENABLE_MQ" = "1" ]; then
     SUPPORT_MQ=1
 else
@@ -25,13 +28,9 @@ fi
 QDISC=cake
 
 # egress(): upload (LAN -> WAN, on $IFACE)
-	egress() {
-		local qdisc
-		if [ "$ENABLE_MQ" = "1" ]; then
-		qdisc="cake_mq"
-	else
-		qdisc="cake"
-	fi
+egress() {
+	local qdisc
+    qdisc=$(select_cake $IFACE)
 	
     # Remove existing root qdisc
     SILENT=1 $TC qdisc del dev $IFACE root 2>/dev/null
