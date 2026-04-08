@@ -84,12 +84,10 @@ if [ -f /etc/config/sqm ] && [ ! -f /etc/config/sqm.orig ]; then
     cp /etc/config/sqm /etc/config/sqm.orig
 fi
 
-if [ ! -f /etc/config/sqm ]; then
-    echo "[*] Installing default SQM configuration"
-    cp Gaming_Dscp/sqm.config /etc/config/sqm
-else
-    echo "[*] SQM config already exists, keeping current configuration"
-fi
+# 🔹 Toujours appliquer la config custom
+echo "[*] Applying custom SQM configuration"
+cp Gaming_Dscp/sqm.config /etc/config/sqm
+
 echo "[*] SQM backup saved as /etc/config/sqm.orig"
 
 # --- SQM script ---
