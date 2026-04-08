@@ -77,12 +77,20 @@ echo "=== Gaming_DSCP OpenWrt installer ==="
 # --- SQM config ---
 echo "[*] Installing SQM configuration"
 mkdir -p /etc/config
+
+# 🔹 Backup SQM config si existe
+if [ -f /etc/config/sqm ] && [ ! -f /etc/config/sqm.orig ]; then
+    echo "[*] Backing up existing SQM config"
+    cp /etc/config/sqm /etc/config/sqm.orig
+fi
+
 if [ ! -f /etc/config/sqm ]; then
     echo "[*] Installing default SQM configuration"
     cp Gaming_Dscp/sqm.config /etc/config/sqm
 else
     echo "[*] SQM config already exists, keeping current configuration"
 fi
+echo "[*] SQM backup saved as /etc/config/sqm.orig"
 
 # --- SQM script ---
 echo "[*] Installing custom SQM script"
