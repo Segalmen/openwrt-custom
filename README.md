@@ -190,8 +190,8 @@ The installer automatically detects the package manager:
 
 ```sh
 cd /tmp && \
-uclient-fetch -O - https://github.com/Segalmen/openwrt-custom/archive/refs/heads/main.tar.gz | tar xz && \
-cd openwrt-custom-main && \
+uclient-fetch -O - https://github.com/Segalmen/openwrt-custom/archive/refs/tags/v1.2.tar.gz | tar xz && \
+cd openwrt-custom-v1.2 && \
 sh install.sh
 ```
 
