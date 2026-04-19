@@ -1,366 +1,599 @@
 #!/bin/sh
-set -x
-# Cero3 / modified layer_cake.qos
-# - QDISC = CAKE
-# - Uses ctinfo to restore DSCP on ingress
-# - Uses nftables (inet table sqm_dscp) to store DSCP into conntrack mark
+# =============================================================================
+# Seg_Layer_Cake.qos — Custom SQM script for OpenWrt
+# Based on layer_cake.qos / Cero3
+# - QDISC    : CAKE (with optional multi-queue via cake_mq)
+# - Egress   : DSCP marking via nftables postrouting (both modes)
+# - Ingress  :
+#     ctinfo ON  → postrouting marks + store ctmark → tc ctinfo restores DSCP
+#     ctinfo OFF → prerouting marks BEFORE IFB redirect → tc simple redirect
 #
-# All remaining options (diffserv4, dual-srchost, dual-dsthost, nat, etc.)
-# are inherited from /etc/config/sqm via EQDISC_OPTS / IQDISC_OPTS.
+# Pipeline ctinfo ON :
+#   postrouting (mark + store ctmark) → tc ctinfo restore → CAKE diffserv
+#
+# Pipeline ctinfo OFF :
+#   postrouting (store ctmark only) + prerouting (mark before IFB) → CAKE
+# =============================================================================
 
-# Detect SQM section early
-SQM_SECTION="$(uci -q show sqm | sed -n "s/^\(sqm\.[^.]*\)\.interface='$IFACE'$/\1/p" | head -n1)"
-[ -z "$SQM_SECTION" ] && SQM_SECTION="sqm.@queue[0]"
-
-ENABLE_MQ="$(uci -q get ${SQM_SECTION}.enable_mq)"
-[ -z "$ENABLE_MQ" ] && ENABLE_MQ="1"
-
-# 🔥 add ENABLE_MQ
-USE_MQ="$ENABLE_MQ"
-
-if [ "$ENABLE_MQ" = "1" ]; then
-    SUPPORT_MQ=1
-else
-    SUPPORT_MQ=0
-fi
+[ "${SQM_DEBUG_XTRACE:-0}" = "1" ] && set -x
 
 . ${SQM_LIB_DIR}/defaults.sh
 QDISC=cake
 
-# egress(): upload (LAN -> WAN, on $IFACE)
-egress() {
-	local qdisc
-    qdisc=$(select_cake $IFACE)
-	
-    # Remove existing root qdisc
-    SILENT=1 $TC qdisc del dev $IFACE root 2>/dev/null
+# =============================================================================
+# Helpers
+# =============================================================================
 
-    # Attach CAKE as root qdisc
-    $TC qdisc add dev $IFACE root $( get_stab_string ) $qdisc \
-        bandwidth ${UPLINK}kbit $( get_cake_lla_string ) \
-        ${EGRESS_CAKE_OPTS} ${EQDISC_OPTS}
-
-    # (Optional) Restore DSCP from conntrack on upload as well
-    # Uncomment if needed:
-    #
-    # $TC filter add dev $IFACE parent root protocol all matchall \
-    #     action ctinfo dscp 63 128
+# Safe UCI getter with explicit default
+# Usage: uci_get <section> <option> <default>
+uci_get() {
+    local _section="$1"
+    local _option="$2"
+    local _default="$3"
+    local _val
+    _val="$(uci -q get "${_section}.${_option}" 2>/dev/null)"
+    if [ -z "$_val" ]; then
+        echo "$_default"
+    else
+        echo "$_val"
+    fi
 }
 
-# ingress(): download (WAN -> LAN, via IFB $DEV)
-ingress() {
+# Normalize a comma-separated IP list to nftables set syntax: { a, b, c }
+make_nft_set() {
+    local _raw="$1"
+    local _clean
+    _clean="$(printf '%s' "$_raw" | sed 's/,/ , /g; s/  */ /g; s/^ //; s/ $//')"
+    printf '{ %s }' "$_clean"
+}
 
+# Convert DSCP name to conntrack mark value (with 0x80 valid flag)
+dscp_to_ctmark() {
+    case "$(printf '%s' "$1" | tr 'A-Z' 'a-z')" in
+        cs0)  echo "0x80" ;;
+        cs1)  echo "0x88" ;;
+        cs2)  echo "0x90" ;;
+        cs3)  echo "0x98" ;;
+        cs4)  echo "0xa0" ;;
+        cs5)  echo "0xa8" ;;
+        cs6)  echo "0xb0" ;;
+        cs7)  echo "0xb8" ;;
+        ef)   echo "0xae" ;;
+        af11) echo "0x8a" ;;
+        af12) echo "0x8c" ;;
+        af13) echo "0x8e" ;;
+        af21) echo "0x92" ;;
+        af22) echo "0x94" ;;
+        af23) echo "0x96" ;;
+        af31) echo "0x9a" ;;
+        af32) echo "0x9c" ;;
+        af33) echo "0x9e" ;;
+        af41) echo "0xa2" ;;
+        af42) echo "0xa4" ;;
+        af43) echo "0xa6" ;;
+        *) return 1 ;;
+    esac
+}
+
+# =============================================================================
+# SQM section detection — bound to $IFACE
+# =============================================================================
+detect_sqm_section() {
+    local _sec
+    _sec="$(uci -q show sqm 2>/dev/null \
+        | sed -n "s/^\(sqm\.[^.]*\)\.interface='${IFACE}'$/\1/p" \
+        | head -n1)"
+    [ -z "$_sec" ] && _sec="sqm.@queue[0]"
+    echo "$_sec"
+}
+
+SQM_SECTION="$(detect_sqm_section)"
+
+# =============================================================================
+# Load all UCI options — exported for sub-functions
+# =============================================================================
+_load_uci_options() {
+    ENABLE_MQ="$(uci_get "$SQM_SECTION" enable_mq 1)"
+    CTINFO_ENABLE="$(uci_get "$SQM_SECTION" ctinfo_enable 1)"
+
+    PRIORITY_IP_RAW="$(uci_get "$SQM_SECTION" gaming_ip '192.168.1.100')"
+    PRIORITY_IP6_RAW="$(uci_get "$SQM_SECTION" gaming_ip6 'fd00::1')"
+
+    PRIORITY_UDP_ENABLE="$(uci_get "$SQM_SECTION" priority_udp_enable 0)"
+    PRIORITY_UDP_DSCP="$(uci_get "$SQM_SECTION" priority_udp_dscp ef)"
+    PRIORITY_UDP_PORTS="$(uci_get "$SQM_SECTION" gaming_udp_ports '3659,3074,3478-3480,10000-45000')"
+
+    PRIORITY_TCP_ENABLE="$(uci_get "$SQM_SECTION" priority_tcp_enable 0)"
+    PRIORITY_TCP_DSCP="$(uci_get "$SQM_SECTION" priority_tcp_dscp af41)"
+    PRIORITY_TCP_PORTS="$(uci_get "$SQM_SECTION" gaming_tcp_ports '')"
+
+    BROWSING_ENABLE="$(uci_get "$SQM_SECTION" browsing_enable 0)"
+    BROWSING_DSCP="$(uci_get "$SQM_SECTION" browsing_dscp af21)"
+    BROWSING_TCP_PORTS="$(uci_get "$SQM_SECTION" browsing_tcp_ports '80,8080,443')"
+    BROWSING_UDP_PORTS="$(uci_get "$SQM_SECTION" browsing_udp_ports '443')"
+
+    BULK_ENABLE="$(uci_get "$SQM_SECTION" gaming_bulk_enable 0)"
+    BULK_DSCP="$(uci_get "$SQM_SECTION" gaming_bulk_dscp cs1)"
+
+    # Nouvelles options micro-paquets et big HTTPS
+    MICRO_PKT_ENABLE="$(uci_get "$SQM_SECTION" micro_pkt_enable 1)"
+    MICRO_PKT_DSCP="$(uci_get "$SQM_SECTION" micro_pkt_dscp cs6)"
+    BIG_HTTPS_DOWNGRADE="$(uci_get "$SQM_SECTION" big_https_downgrade 1)"
+
+    # Normalize DSCP to lowercase (nftables requirement)
+    PRIORITY_UDP_DSCP="$(printf '%s' "$PRIORITY_UDP_DSCP" | tr '[:upper:]' '[:lower:]')"
+    PRIORITY_TCP_DSCP="$(printf '%s' "$PRIORITY_TCP_DSCP" | tr '[:upper:]' '[:lower:]')"
+    BROWSING_DSCP="$(printf '%s'     "$BROWSING_DSCP"     | tr '[:upper:]' '[:lower:]')"
+    BULK_DSCP="$(printf '%s'         "$BULK_DSCP"         | tr '[:upper:]' '[:lower:]')"
+    MICRO_PKT_DSCP="$(printf '%s'    "$MICRO_PKT_DSCP"    | tr '[:upper:]' '[:lower:]')"
+
+    # Build nftables IP sets
+    PRIORITY_IP_SET="$(make_nft_set "$PRIORITY_IP_RAW")"
+    PRIORITY_IP6_SET="$(make_nft_set "$PRIORITY_IP6_RAW")"
+
+    # MQ support — required by select_cake / start-sqm
+    [ "$ENABLE_MQ" = "1" ] && SUPPORT_MQ=1 || SUPPORT_MQ=0
+    USE_MQ="$ENABLE_MQ"
+
+    export ENABLE_MQ CTINFO_ENABLE USE_MQ SUPPORT_MQ
+    export PRIORITY_IP_RAW PRIORITY_IP6_RAW PRIORITY_IP_SET PRIORITY_IP6_SET
+    export PRIORITY_UDP_ENABLE PRIORITY_UDP_DSCP PRIORITY_UDP_PORTS
+    export PRIORITY_TCP_ENABLE PRIORITY_TCP_DSCP PRIORITY_TCP_PORTS
+    export BROWSING_ENABLE BROWSING_DSCP BROWSING_TCP_PORTS BROWSING_UDP_PORTS
+    export BULK_ENABLE BULK_DSCP
+    export MICRO_PKT_ENABLE MICRO_PKT_DSCP BIG_HTTPS_DOWNGRADE
+}
+
+# =============================================================================
+# egress() — Upload : LAN -> WAN on $IFACE
+# =============================================================================
+egress() {
     local qdisc
-    qdisc=$(select_cake $DEV)
+    qdisc="$(select_cake "$IFACE")"
 
-    SILENT=1 $TC qdisc del dev $IFACE handle ffff: ingress 2>/dev/null
-    $TC qdisc add dev $IFACE handle ffff: ingress
+    SILENT=1 $TC qdisc del dev "$IFACE" root 2>/dev/null || true
 
-    $TC qdisc del dev $DEV root 2>/dev/null
+    $TC qdisc add dev "$IFACE" root \
+        $(get_stab_string) "$qdisc" \
+        bandwidth "${UPLINK}kbit" \
+        $(get_cake_lla_string) \
+        ${EGRESS_CAKE_OPTS} ${EQDISC_OPTS}
+}
 
-    # --- Apply DSCP ignore / wash options ---
-    if [ "$CTINFO_ENABLE" = "0" ]; then
-        ZERO_DSCP_INGRESS=0
+# =============================================================================
+# ingress() — Download : WAN -> LAN via IFB $DEV
+# =============================================================================
+ingress() {
+    local qdisc
+    qdisc="$(select_cake "$DEV")"
+
+    SILENT=1 $TC qdisc del dev "$IFACE" handle ffff: ingress 2>/dev/null || true
+    $TC qdisc add dev "$IFACE" handle ffff: ingress
+
+    $TC qdisc del dev "$DEV" root 2>/dev/null || true
+
+    # With ctinfo ON keep DSCP meaningful — disable besteffort/wash
+    if [ "$CTINFO_ENABLE" = "1" ]; then
+        IGNORE_DSCP_INGRESS=0
     fi
 
-    [ "${IGNORE_DSCP_INGRESS:-0}" -eq 1 ] && \
-        INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS besteffort"
+    if [ "${IGNORE_DSCP_INGRESS:-0}" -eq 1 ]; then
+        case " $INGRESS_CAKE_OPTS " in
+            *" besteffort "*) ;;
+            *) INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS besteffort" ;;
+        esac
+    fi
 
-    [ "${ZERO_DSCP_INGRESS:-0}" -eq 1 ] && \
-        INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS wash"
-	
-	$IP link set dev $DEV up 2>/dev/null	
+    if [ "${ZERO_DSCP_INGRESS:-0}" -eq 1 ]; then
+        case " $INGRESS_CAKE_OPTS " in
+            *" wash "*) ;;
+            *) INGRESS_CAKE_OPTS="$INGRESS_CAKE_OPTS wash" ;;
+        esac
+    fi
 
-    # --- Attach CAKE (MQ auto-selection) ---
-    $TC qdisc add dev $DEV root $( get_stab_string ) $qdisc \
-        bandwidth ${DOWNLINK}kbit $( get_cake_lla_string ) \
+    $IP link set dev "$DEV" up 2>/dev/null || true
+
+    $TC qdisc add dev "$DEV" root \
+        $(get_stab_string) "$qdisc" \
+        bandwidth "${DOWNLINK}kbit" \
+        $(get_cake_lla_string) \
         ${INGRESS_CAKE_OPTS} ${IQDISC_OPTS}
 
-    $IP link set dev $DEV up
+    $IP link set dev "$DEV" up
 
-    # --- Redirect ingress traffic ---
     if [ "$CTINFO_ENABLE" = "1" ]; then
-
-        # Restore DSCP from conntrack
-        $TC filter add dev $IFACE parent ffff: protocol all matchall \
+        # ctinfo ON — kernel restores DSCP from ctmark efficiently
+        $TC filter add dev "$IFACE" parent ffff: protocol all matchall \
             action ctinfo dscp 63 128 \
-            mirred egress redirect dev $DEV
-
+            mirred egress redirect dev "$DEV"
     else
-
-        # Redirect only (no DSCP restore)
-        $TC filter add dev $IFACE parent ffff: protocol all matchall \
-            action mirred egress redirect dev $DEV
-
+        # ctinfo OFF — prerouting marks DSCP before this redirect
+        $TC filter add dev "$IFACE" parent ffff: protocol all matchall \
+            action mirred egress redirect dev "$DEV"
     fi
 }
 
+# =============================================================================
+# _build_dscp_rules() — Build all DSCP classification rules
+#
+# $1 = chain name ("postrouting" or "prerouting")
+#
+# ctinfo ON  → called with "postrouting"
+# ctinfo OFF → called with "prerouting"
+# =============================================================================
+_build_dscp_rules() {
+    local _chain="$1"
 
+    # ------------------------------------------------------------------
+    # Priority UDP
+    # ------------------------------------------------------------------
+    if [ "$PRIORITY_UDP_ENABLE" = "1" ] && [ -n "$PRIORITY_UDP_PORTS" ]; then
 
-########################################
-#        nftables: sqm_dscp            #
-########################################
+        nft add rule inet sqm_dscp "$_chain" \
+            ip saddr "$PRIORITY_IP_SET" \
+            udp sport { "$PRIORITY_UDP_PORTS" } \
+            counter ip dscp set "$PRIORITY_UDP_DSCP" \
+            comment "PrioUDPup4"
 
+        nft add rule inet sqm_dscp "$_chain" \
+            ip daddr "$PRIORITY_IP_SET" \
+            udp dport { "$PRIORITY_UDP_PORTS" } \
+            counter ip dscp set "$PRIORITY_UDP_DSCP" \
+            comment "PrioUDPdwn4"
+
+        nft add rule inet sqm_dscp "$_chain" \
+            ip6 saddr "$PRIORITY_IP6_SET" \
+            udp sport { "$PRIORITY_UDP_PORTS" } \
+            counter ip6 dscp set "$PRIORITY_UDP_DSCP" \
+            comment "PrioUDPup6"
+
+        nft add rule inet sqm_dscp "$_chain" \
+            ip6 daddr "$PRIORITY_IP6_SET" \
+            udp dport { "$PRIORITY_UDP_PORTS" } \
+            counter ip6 dscp set "$PRIORITY_UDP_DSCP" \
+            comment "PrioUDPdwn6"
+    fi
+
+    # ------------------------------------------------------------------
+    # Priority TCP
+    # ------------------------------------------------------------------
+    if [ "$PRIORITY_TCP_ENABLE" = "1" ] && [ -n "$PRIORITY_TCP_PORTS" ]; then
+
+        nft add rule inet sqm_dscp "$_chain" \
+            ip saddr "$PRIORITY_IP_SET" \
+            tcp sport { "$PRIORITY_TCP_PORTS" } \
+            counter ip dscp set "$PRIORITY_TCP_DSCP" \
+            comment "PrioTCPup4"
+
+        nft add rule inet sqm_dscp "$_chain" \
+            ip daddr "$PRIORITY_IP_SET" \
+            tcp dport { "$PRIORITY_TCP_PORTS" } \
+            counter ip dscp set "$PRIORITY_TCP_DSCP" \
+            comment "PrioTCPdwn4"
+
+        nft add rule inet sqm_dscp "$_chain" \
+            ip6 saddr "$PRIORITY_IP6_SET" \
+            tcp sport { "$PRIORITY_TCP_PORTS" } \
+            counter ip6 dscp set "$PRIORITY_TCP_DSCP" \
+            comment "PrioTCPup6"
+
+        nft add rule inet sqm_dscp "$_chain" \
+            ip6 daddr "$PRIORITY_IP6_SET" \
+            tcp dport { "$PRIORITY_TCP_PORTS" } \
+            counter ip6 dscp set "$PRIORITY_TCP_DSCP" \
+            comment "PrioTCPdwn6"
+    fi
+
+    # ------------------------------------------------------------------
+    # Micro-packet priority (configurable via LuCI)
+    # < 150 bytes  → MICRO_PKT_DSCP (default CS6)
+    # 150-300 bytes → PRIORITY_UDP_DSCP
+    # Only if not already marked with a priority DSCP
+    # ------------------------------------------------------------------
+    if [ "$MICRO_PKT_ENABLE" = "1" ] && \
+       { [ "$PRIORITY_UDP_ENABLE" = "1" ] || [ "$PRIORITY_TCP_ENABLE" = "1" ]; }; then
+
+        # IPv4 upload micro
+        nft add rule inet sqm_dscp "$_chain" \
+            ip saddr "$PRIORITY_IP_SET" \
+            ip dscp != "$PRIORITY_UDP_DSCP" \
+            ip dscp != "$PRIORITY_TCP_DSCP" \
+            meta length lt 150 \
+            counter ip dscp set "$MICRO_PKT_DSCP" \
+            comment "MicroPktup4"
+
+        # IPv4 download micro
+        nft add rule inet sqm_dscp "$_chain" \
+            ip daddr "$PRIORITY_IP_SET" \
+            ip dscp != "$PRIORITY_UDP_DSCP" \
+            ip dscp != "$PRIORITY_TCP_DSCP" \
+            meta length lt 150 \
+            counter ip dscp set "$MICRO_PKT_DSCP" \
+            comment "MicroPktdwn4"
+
+        # IPv4 upload small
+        nft add rule inet sqm_dscp "$_chain" \
+            ip saddr "$PRIORITY_IP_SET" \
+            ip dscp != "$PRIORITY_UDP_DSCP" \
+            ip dscp != "$PRIORITY_TCP_DSCP" \
+            meta length ge 150 meta length lt 300 \
+            counter ip dscp set "$PRIORITY_UDP_DSCP" \
+            comment "SmallPktup4"
+
+        # IPv4 download small
+        nft add rule inet sqm_dscp "$_chain" \
+            ip daddr "$PRIORITY_IP_SET" \
+            ip dscp != "$PRIORITY_UDP_DSCP" \
+            ip dscp != "$PRIORITY_TCP_DSCP" \
+            meta length ge 150 meta length lt 300 \
+            counter ip dscp set "$PRIORITY_UDP_DSCP" \
+            comment "SmallPktdwn4"
+
+        # IPv6 upload micro
+        nft add rule inet sqm_dscp "$_chain" \
+            ip6 saddr "$PRIORITY_IP6_SET" \
+            ip6 dscp != "$PRIORITY_UDP_DSCP" \
+            ip6 dscp != "$PRIORITY_TCP_DSCP" \
+            meta length lt 150 \
+            counter ip6 dscp set "$MICRO_PKT_DSCP" \
+            comment "MicroPktup6"
+
+        # IPv6 download micro
+        nft add rule inet sqm_dscp "$_chain" \
+            ip6 daddr "$PRIORITY_IP6_SET" \
+            ip6 dscp != "$PRIORITY_UDP_DSCP" \
+            ip6 dscp != "$PRIORITY_TCP_DSCP" \
+            meta length lt 150 \
+            counter ip6 dscp set "$MICRO_PKT_DSCP" \
+            comment "MicroPktdwn6"
+
+        # IPv6 upload small
+        nft add rule inet sqm_dscp "$_chain" \
+            ip6 saddr "$PRIORITY_IP6_SET" \
+            ip6 dscp != "$PRIORITY_UDP_DSCP" \
+            ip6 dscp != "$PRIORITY_TCP_DSCP" \
+            meta length ge 150 meta length lt 300 \
+            counter ip6 dscp set "$PRIORITY_UDP_DSCP" \
+            comment "SmallPktup6"
+
+        # IPv6 download small
+        nft add rule inet sqm_dscp "$_chain" \
+            ip6 daddr "$PRIORITY_IP6_SET" \
+            ip6 dscp != "$PRIORITY_UDP_DSCP" \
+            ip6 dscp != "$PRIORITY_TCP_DSCP" \
+            meta length ge 150 meta length lt 300 \
+            counter ip6 dscp set "$PRIORITY_UDP_DSCP" \
+            comment "SmallPktdwn6"
+    fi
+
+    # ------------------------------------------------------------------
+    # Bulk traffic classification
+    # ------------------------------------------------------------------
+    if [ "$BULK_ENABLE" = "1" ]; then
+
+        if [ -n "$BROWSING_TCP_PORTS" ]; then
+            nft add rule inet sqm_dscp "$_chain" \
+                ip saddr "$PRIORITY_IP_SET" \
+                tcp dport { "$BROWSING_TCP_PORTS" } \
+                counter ip dscp set "$BULK_DSCP" \
+                comment "BulkTCPup4"
+
+            nft add rule inet sqm_dscp "$_chain" \
+                ip daddr "$PRIORITY_IP_SET" \
+                tcp dport { "$BROWSING_TCP_PORTS" } \
+                counter ip dscp set "$BULK_DSCP" \
+                comment "BulkTCPdwn4"
+
+            nft add rule inet sqm_dscp "$_chain" \
+                ip6 saddr "$PRIORITY_IP6_SET" \
+                tcp dport { "$BROWSING_TCP_PORTS" } \
+                counter ip6 dscp set "$BULK_DSCP" \
+                comment "BulkTCPup6"
+
+            nft add rule inet sqm_dscp "$_chain" \
+                ip6 daddr "$PRIORITY_IP6_SET" \
+                tcp dport { "$BROWSING_TCP_PORTS" } \
+                counter ip6 dscp set "$BULK_DSCP" \
+                comment "BulkTCPdwn6"
+        fi
+
+        if [ -n "$BROWSING_UDP_PORTS" ]; then
+            nft add rule inet sqm_dscp "$_chain" \
+                ip saddr "$PRIORITY_IP_SET" \
+                udp dport { "$BROWSING_UDP_PORTS" } \
+                counter ip dscp set "$BULK_DSCP" \
+                comment "BulkUDPup4"
+
+            nft add rule inet sqm_dscp "$_chain" \
+                ip daddr "$PRIORITY_IP_SET" \
+                udp dport { "$BROWSING_UDP_PORTS" } \
+                counter ip dscp set "$BULK_DSCP" \
+                comment "BulkUDPdwn4"
+
+            nft add rule inet sqm_dscp "$_chain" \
+                ip6 saddr "$PRIORITY_IP6_SET" \
+                udp dport { "$BROWSING_UDP_PORTS" } \
+                counter ip6 dscp set "$BULK_DSCP" \
+                comment "BulkUDPup6"
+
+            nft add rule inet sqm_dscp "$_chain" \
+                ip6 daddr "$PRIORITY_IP6_SET" \
+                udp dport { "$BROWSING_UDP_PORTS" } \
+                counter ip6 dscp set "$BULK_DSCP" \
+                comment "BulkUDPdwn6"
+        fi
+
+        # Smart bulk: large HTTPS packets auto-downgraded (configurable)
+        if [ "$BIG_HTTPS_DOWNGRADE" = "1" ]; then
+            nft add rule inet sqm_dscp "$_chain" \
+                ip saddr "$PRIORITY_IP_SET" \
+                ip dscp != "$PRIORITY_UDP_DSCP" \
+                meta length gt 1000 tcp dport 443 \
+                counter ip dscp set "$BULK_DSCP" \
+                comment "BigHTTPSup4"
+
+            nft add rule inet sqm_dscp "$_chain" \
+                ip daddr "$PRIORITY_IP_SET" \
+                ip dscp != "$PRIORITY_UDP_DSCP" \
+                meta length gt 1000 tcp sport 443 \
+                counter ip dscp set "$BULK_DSCP" \
+                comment "BigHTTPSdwn4"
+
+            nft add rule inet sqm_dscp "$_chain" \
+                ip6 saddr "$PRIORITY_IP6_SET" \
+                ip6 dscp != "$PRIORITY_UDP_DSCP" \
+                meta length gt 1000 tcp dport 443 \
+                counter ip6 dscp set "$BULK_DSCP" \
+                comment "BigHTTPSup6"
+
+            nft add rule inet sqm_dscp "$_chain" \
+                ip6 daddr "$PRIORITY_IP6_SET" \
+                ip6 dscp != "$PRIORITY_UDP_DSCP" \
+                meta length gt 1000 tcp sport 443 \
+                counter ip6 dscp set "$BULK_DSCP" \
+                comment "BigHTTPSdwn6"
+        fi
+    fi
+
+    # ------------------------------------------------------------------
+    # Browsing classification
+    # Only marks CS0 traffic — does not overwrite existing DSCP marks
+    # ------------------------------------------------------------------
+    if [ "$BROWSING_ENABLE" = "1" ]; then
+
+        if [ -n "$BROWSING_TCP_PORTS" ]; then
+            nft add rule inet sqm_dscp "$_chain" \
+                ip dscp cs0 \
+                tcp dport { "$BROWSING_TCP_PORTS" } \
+                counter ip dscp set "$BROWSING_DSCP" \
+                comment "BrowsTCP4"
+
+            nft add rule inet sqm_dscp "$_chain" \
+                ip6 dscp cs0 \
+                tcp dport { "$BROWSING_TCP_PORTS" } \
+                counter ip6 dscp set "$BROWSING_DSCP" \
+                comment "BrowsTCP6"
+        fi
+
+        if [ -n "$BROWSING_UDP_PORTS" ]; then
+            nft add rule inet sqm_dscp "$_chain" \
+                ip dscp cs0 \
+                udp dport { "$BROWSING_UDP_PORTS" } \
+                counter ip dscp set "$BROWSING_DSCP" \
+                comment "BrowsUDP4"
+
+            nft add rule inet sqm_dscp "$_chain" \
+                ip6 dscp cs0 \
+                udp dport { "$BROWSING_UDP_PORTS" } \
+                counter ip6 dscp set "$BROWSING_DSCP" \
+                comment "BrowsUDP6"
+        fi
+    fi
+}
+
+# =============================================================================
+# setup_nftables()
+#
+# ctinfo ON :
+#   postrouting → all DSCP rules + store ctmark
+#   prerouting  → empty (tc ctinfo handles restore)
+#
+# ctinfo OFF :
+#   postrouting → store ctmark only
+#   prerouting  → all DSCP rules (marks download before IFB redirect)
+# =============================================================================
 setup_nftables() {
-    # Reload UCI parameters for the SQM section bound to $IFACE
+    nft delete table inet sqm_dscp >/dev/null 2>&1 || true
 
-    GAMING_IP="$(uci -q get ${SQM_SECTION}.gaming_ip || echo '192.168.1.100')"
-    [ -z "$GAMING_IP" ] && GAMING_IP="192.168.1.100"
-    GAMING_IP_SET="{ $(echo "$GAMING_IP" | sed 's/,/, /g') }"
-
-    # Gaming IPv6
-    GAMING_IP6="$(uci -q get ${SQM_SECTION}.gaming_ip6 || echo '2001:db8::100')"
-    [ -z "$GAMING_IP6" ] && GAMING_IP6="2001:db8::100"
-    GAMING_IP6_SET="{ $(echo "$GAMING_IP6" | sed 's/,/, /g') }"
-
-    PRIORITY_UDP_ENABLE="$(uci -q get ${SQM_SECTION}.priority_udp_enable || echo '0')"
-	PRIORITY_TCP_ENABLE="$(uci -q get ${SQM_SECTION}.priority_tcp_enable || echo '0')"
-
-	PRIORITY_UDP_DSCP="$(uci -q get ${SQM_SECTION}.priority_udp_dscp || echo 'ef')"
-	PRIORITY_UDP_DSCP="$(printf '%s\n' "$PRIORITY_UDP_DSCP" | awk '{print tolower($0)}')"
-
-	PRIORITY_TCP_DSCP="$(uci -q get ${SQM_SECTION}.priority_tcp_dscp || echo 'af41')"
-	PRIORITY_TCP_DSCP="$(printf '%s\n' "$PRIORITY_TCP_DSCP" | awk '{print tolower($0)}')"
-
-    GAMING_UDP_PORTS="$(uci -q get ${SQM_SECTION}.gaming_udp_ports || echo '3659,3074,3478-3480,10000-45000')"
-    [ -z "$GAMING_UDP_PORTS" ] && GAMING_UDP_PORTS="3659,3074,3478-3480,10000-45000"
-
-    GAMING_TCP_PORTS="$(uci -q get ${SQM_SECTION}.gaming_tcp_ports || echo '')"
-
-    BROWSING_ENABLE="$(uci -q get ${SQM_SECTION}.browsing_enable || echo '0')"
-
-    BROWSING_DSCP="$(uci -q get ${SQM_SECTION}.browsing_dscp || echo 'cs1')"
-    BROWSING_DSCP="$(printf '%s\n' "$BROWSING_DSCP" | awk '{print tolower($0)}')"
-
-    BROWSING_TCP_PORTS="$(uci -q get ${SQM_SECTION}.browsing_tcp_ports || echo '80,8080,443')"
-    BROWSING_UDP_PORTS="$(uci -q get ${SQM_SECTION}.browsing_udp_ports || echo '443')"
-
-    GAMING_BULK_ENABLE="$(uci -q get ${SQM_SECTION}.gaming_bulk_enable || echo '0')"
-    GAMING_BULK_DSCRAW="$(uci -q get ${SQM_SECTION}.gaming_bulk_dscp || echo 'cs1')"
-    GAMING_BULK_DSCRAW="$(printf '%s\n' "$GAMING_BULK_DSCRAW" | awk '{print tolower($0)}')"
-    GAMING_BULK_DSCP="$GAMING_BULK_DSCRAW"
-	
-	CTINFO_ENABLE="$(uci -q get ${SQM_SECTION}.ctinfo_enable || echo '1')"			
-
-    # Clean up any existing sqm_dscp table
-    nft delete table inet sqm_dscp >/dev/null 2>&1
-
-    #########################
-	#  HEREDOC -> nft      #
-	#########################
-    nft -f - << EOF
+    nft -f - << 'NFTEOF'
 add table inet sqm_dscp
 
-add chain inet sqm_dscp sqm_dscp {
-    type filter hook postrouting priority mangle;
-    policy accept;
-}
-# Prerouting chain:
-# - Marks inbound (WAN -> LAN) traffic BEFORE tc ingress / IFB
-# - Required for CAKE download classification (diffserv)
 add chain inet sqm_dscp prerouting {
     type filter hook prerouting priority mangle;
     policy accept;
 }
-EOF
-    #########################
-	#  END HEREDOC         #
-	#########################
-	
-	if [ "$PRIORITY_UDP_ENABLE" = "1" ] && [ -n "$GAMING_UDP_PORTS" ]; then
 
-    nft add rule inet sqm_dscp prerouting \
-        ip daddr $GAMING_IP_SET udp dport { $GAMING_UDP_PORTS } \
-        counter ip dscp set $PRIORITY_UDP_DSCP \
-        comment "\"Priority UDP DOWN prerouting\""
-
-    nft add rule inet sqm_dscp sqm_dscp \
-        ip saddr $GAMING_IP_SET udp sport { $GAMING_UDP_PORTS } \
-        counter ip dscp set $PRIORITY_UDP_DSCP \
-        comment "\"Priority UDP UP v4\""
-
-    nft add rule inet sqm_dscp sqm_dscp \
-        ip daddr $GAMING_IP_SET udp dport { $GAMING_UDP_PORTS } \
-        counter ip dscp set $PRIORITY_UDP_DSCP \
-        comment "\"Priority UDP DOWN v4\""
-
-    nft add rule inet sqm_dscp sqm_dscp \
-        ip6 saddr $GAMING_IP6_SET udp sport { $GAMING_UDP_PORTS } \
-        counter ip6 dscp set $PRIORITY_UDP_DSCP \
-        comment "\"Priority UDP UP v6\""
-
-    nft add rule inet sqm_dscp sqm_dscp \
-        ip6 daddr $GAMING_IP6_SET udp dport { $GAMING_UDP_PORTS } \
-        counter ip6 dscp set $PRIORITY_UDP_DSCP \
-        comment "\"Priority UDP DOWN v6\""
-
-fi
-
-if [ "$PRIORITY_TCP_ENABLE" = "1" ] && [ -n "$GAMING_TCP_PORTS" ]; then
-
-    nft add rule inet sqm_dscp prerouting \
-        ip daddr $GAMING_IP_SET tcp dport { $GAMING_TCP_PORTS } \
-        counter ip dscp set $PRIORITY_TCP_DSCP \
-        comment "\"Priority TCP DOWN prerouting\""
-
-    nft add rule inet sqm_dscp sqm_dscp \
-        ip saddr $GAMING_IP_SET tcp sport { $GAMING_TCP_PORTS } \
-        counter ip dscp set $PRIORITY_TCP_DSCP \
-        comment "\"Priority TCP UP v4\""
-
-    nft add rule inet sqm_dscp sqm_dscp \
-        ip daddr $GAMING_IP_SET tcp dport { $GAMING_TCP_PORTS } \
-        counter ip dscp set $PRIORITY_TCP_DSCP \
-        comment "\"Priority TCP DOWN v4\""
-
-    nft add rule inet sqm_dscp sqm_dscp \
-        ip6 saddr $GAMING_IP6_SET tcp sport { $GAMING_TCP_PORTS } \
-        counter ip6 dscp set $PRIORITY_TCP_DSCP \
-        comment "\"Priority TCP UP v6\""
-
-    nft add rule inet sqm_dscp sqm_dscp \
-        ip6 daddr $GAMING_IP6_SET tcp dport { $GAMING_TCP_PORTS } \
-        counter ip6 dscp set $PRIORITY_TCP_DSCP \
-        comment "\"Priority TCP DOWN v6\""
-
-fi
-
-if [ "$BROWSING_ENABLE" = "1" ]; then
-
-    if [ -n "$BROWSING_TCP_PORTS" ]; then
-
-        nft add rule inet sqm_dscp sqm_dscp \
-            tcp dport { $BROWSING_TCP_PORTS } \
-            counter ip dscp set $BROWSING_DSCP \
-            comment "\"Browsing TCP v4\""
-
-        nft add rule inet sqm_dscp sqm_dscp \
-            tcp dport { $BROWSING_TCP_PORTS } \
-            counter ip6 dscp set $BROWSING_DSCP \
-            comment "\"Browsing TCP v6\""
-    fi
-
-    if [ -n "$BROWSING_UDP_PORTS" ]; then
-
-        nft add rule inet sqm_dscp sqm_dscp \
-            udp dport { $BROWSING_UDP_PORTS } \
-            counter ip dscp set $BROWSING_DSCP \
-            comment "\"Browsing UDP v4\""
-
-        nft add rule inet sqm_dscp sqm_dscp \
-            udp dport { $BROWSING_UDP_PORTS } \
-            counter ip6 dscp set $BROWSING_DSCP \
-            comment "\"Browsing UDP v6\""
-    fi
-fi
-
-if [ "$GAMING_BULK_ENABLE" = "1" ]; then
-
-    if [ -n "$BROWSING_TCP_PORTS" ]; then
-
-        nft add rule inet sqm_dscp sqm_dscp \
-            ip saddr $GAMING_IP_SET tcp dport { $BROWSING_TCP_PORTS } \
-            counter ip dscp set $GAMING_BULK_DSCP \
-            comment "\"Gaming BULK TCP v4 UP\""
-
-        nft add rule inet sqm_dscp sqm_dscp \
-            ip daddr $GAMING_IP_SET tcp dport { $BROWSING_TCP_PORTS } \
-            counter ip dscp set $GAMING_BULK_DSCP \
-            comment "\"Gaming BULK TCP v4 DOWN\""
-
-        nft add rule inet sqm_dscp sqm_dscp \
-            ip6 saddr $GAMING_IP6_SET tcp dport { $BROWSING_TCP_PORTS } \
-            counter ip6 dscp set $GAMING_BULK_DSCP \
-            comment "\"Gaming BULK TCP v6 UP\""
-
-        nft add rule inet sqm_dscp sqm_dscp \
-            ip6 daddr $GAMING_IP6_SET tcp dport { $BROWSING_TCP_PORTS } \
-            counter ip6 dscp set $GAMING_BULK_DSCP \
-            comment "\"Gaming BULK TCP v6 DOWN\""
-    fi
-
-    if [ -n "$BROWSING_UDP_PORTS" ]; then
-
-        nft add rule inet sqm_dscp sqm_dscp \
-            ip saddr $GAMING_IP_SET udp dport { $BROWSING_UDP_PORTS } \
-            counter ip dscp set $GAMING_BULK_DSCP \
-            comment "\"Gaming BULK UDP v4 UP\""
-
-        nft add rule inet sqm_dscp sqm_dscp \
-            ip daddr $GAMING_IP_SET udp dport { $BROWSING_UDP_PORTS } \
-            counter ip dscp set $GAMING_BULK_DSCP \
-            comment "\"Gaming BULK UDP v4 DOWN\""
-
-        nft add rule inet sqm_dscp sqm_dscp \
-            ip6 saddr $GAMING_IP6_SET udp dport { $BROWSING_UDP_PORTS } \
-            counter ip6 dscp set $GAMING_BULK_DSCP \
-            comment "\"Gaming BULK UDP v6 UP\""
-
-        nft add rule inet sqm_dscp sqm_dscp \
-            ip6 daddr $GAMING_IP6_SET udp dport { $BROWSING_UDP_PORTS } \
-            counter ip6 dscp set $GAMING_BULK_DSCP \
-            comment "\"Gaming BULK UDP v6 DOWN\""
-    fi
-fi
+add chain inet sqm_dscp postrouting {
+    type filter hook postrouting priority mangle;
+    policy accept;
+}
+NFTEOF
 
     if [ "$CTINFO_ENABLE" = "1" ]; then
-    nft 'add rule inet sqm_dscp sqm_dscp ct mark set ip dscp or 0x80 counter comment "Store DSCP IPv4 into ctmark"'
-    nft 'add rule inet sqm_dscp sqm_dscp ct mark set ip6 dscp or 0x80 counter comment "Store DSCP IPv6 into ctmark"'
-	fi
+        # ----------------------------------------------------------------
+        # ctinfo ON — all rules in postrouting
+        # tc ctinfo dscp 63 128 handles DSCP restore on ingress
+        # ----------------------------------------------------------------
+        _build_dscp_rules "postrouting"
+
+        # Store DSCP into ctmark — read by tc ctinfo on ingress
+        nft add rule inet sqm_dscp postrouting \
+            ip protocol != { icmp } \
+            ct mark set ip dscp or 0x80 \
+            counter comment "StoreIPv4ctmark"
+
+        nft add rule inet sqm_dscp postrouting \
+            ip6 nexthdr != { icmpv6 } \
+            ct mark set ip6 dscp or 0x80 \
+            counter comment "StoreIPv6ctmark"
+
+        # prerouting intentionally empty
+
+    else
+        # ----------------------------------------------------------------
+        # ctinfo OFF — rules in prerouting, marks download before IFB
+        # postrouting only stores ctmark for connection tracking
+        # ----------------------------------------------------------------
+        _build_dscp_rules "prerouting"
+
+        # Store ctmark in postrouting — tracks connections for future packets
+        nft add rule inet sqm_dscp postrouting \
+            ip protocol != { icmp } \
+            ct mark set ip dscp or 0x80 \
+            counter comment "StoreIPv4ctmark"
+
+        nft add rule inet sqm_dscp postrouting \
+            ip6 nexthdr != { icmpv6 } \
+            ct mark set ip6 dscp or 0x80 \
+            counter comment "StoreIPv6ctmark"
+    fi
 }
 
+# =============================================================================
+# cleanup_nftables()
+# =============================================================================
 cleanup_nftables() {
     nft delete table inet sqm_dscp >/dev/null 2>&1 || true
 }
 
-
-	########################################
-	#     Hooks used by sqm-scripts   #
-	########################################
+# =============================================================================
+# SQM lifecycle hooks
+# =============================================================================
 
 sqm_prepare_script() {
-	
-	CTINFO_ENABLE="$(uci -q get ${SQM_SECTION}.ctinfo_enable || echo '1')"
-	export CTINFO_ENABLE
-    # Load required modules and verify CAKE availability
+    _load_uci_options
     do_modules
-    verify_qdisc $QDISC "cake" || return 1
-
-    # Prepare nftables table to store DSCP into conntrack
+    verify_qdisc "$QDISC" "cake" || return 1
     setup_nftables
 }
 
 sqm_cleanup_script() {
-    # Clean up nftables sqm_dscp table
     cleanup_nftables
 }
 
 sqm_cleanup() {
-    local silent
-    silent=${1:-0}
-
-    # Revert any legacy iptables commands accumulated by SQM
+    local silent="${1:-0}"
     ipt_log_rewind
-
-    # Always clean nftables first
     sqm_cleanup_script
-
-    # Remove IFB interface used by CAKE if present
     if [ -n "$CUR_IFB" ]; then
-        SILENT=$silent $IP link delete dev ${CUR_IFB} type ifb 2>/dev/null
+        SILENT="$silent" $IP link delete dev "${CUR_IFB}" type ifb 2>/dev/null || true
         sqm_debug "${0}: ${CUR_IFB} interface deleted"
     fi
 }
 
-
 sqm_stop() {
-    # Remove ingress qdisc on $IFACE if used
-    [ "${DOWNLINK}" -ne 0 ] && $TC qdisc del dev $IFACE ingress 2>/dev/null
-
-    # Remove CAKE root qdisc on $IFACE (upload)
-    $TC qdisc del dev $IFACE root 2>/dev/null
-
-    # Global cleanup (IFB + nftables)
+    [ "${DOWNLINK:-0}" -ne 0 ] && \
+        $TC qdisc del dev "$IFACE" ingress 2>/dev/null || true
+    $TC qdisc del dev "$IFACE" root 2>/dev/null || true
     sqm_cleanup
 }
-

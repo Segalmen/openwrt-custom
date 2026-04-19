@@ -1,48 +1,77 @@
-This project extends the standard OpenWrt SQM framework with
-advanced DSCP classification policies implemented through
-nftables and integrated into the LuCI interface.
+# DSCP Policies for SQM – OpenWrt
 
-# DSCP Policies for SQM (Latency-sensitive traffic) – OpenWrt
+Custom SQM setup for OpenWrt using **CAKE**, **DSCP**, and **nftables**,
+designed to improve latency-sensitive traffic prioritization.
 
-Custom SQM setup for OpenWrt using **CAKE**, **DSCP**, and **nftables**,  
-designed to improve latency-sensitive traffic prioritization using DSCP.
+Works great for gaming, VoIP, video conferencing, streaming — any real-time
+application that benefits from low and stable latency.
 
 This project provides:
+
 - A custom SQM script (`Seg_Layer_Cake.qos`)
 - nftables-based DSCP marking (IPv4 / IPv6)
-- Optional DSCP policy logic for latency-sensitive and bulk traffic
+- Smart traffic classification with micro-packet boost and bulk downgrade
+- Dual-mode ingress pipeline (ctinfo kernel or nftables prerouting)
 - Automated installer with dependency handling
-- LuCI custom view
+- LuCI custom view with real-time DSCP Connections monitor
+
+---
+
 ## DSCP Policies (LuCI)
 
 The custom SQM interface adds a **DSCP Policies** tab in LuCI.
 
-Available options include:
-
 ### Multi-Queue Support
-Enable CAKE multi-queue mode for hardware with multiple CPU cores or NIC queues.
+Enable `cake_mq` for hardware with multiple CPU cores or NIC queues.
+Recommended on routers with 2+ CPU cores for better throughput distribution.
+
+### DSCP Restore via conntrack (ctinfo)
+Store DSCP into conntrack mark and restore it on ingress using the `ctinfo`
+kernel module. When enabled, all classification rules run in postrouting
+and the kernel handles ingress restore efficiently.
+When disabled, classification rules move to prerouting, marking download
+traffic **before** IFB redirection so CAKE sees the correct DSCP.
 
 ### Priority UDP Classification
-Mark latency-sensitive UDP traffic (e.g. gaming, VoIP).
+Mark UDP traffic from/to priority devices on the specified ports with a
+configurable DSCP value. Suitable for gaming, VoIP, and real-time apps.
 
 ### Priority TCP Classification
-Mark latency-sensitive TCP traffic (optional).
+Mark TCP traffic from/to priority devices (optional).
+Useful for remote desktop, video conferencing signalling, etc.
+
+### Micro-Packet Priority
+Automatically boost very small packets (< 150 bytes) from priority devices
+to the highest CAKE tin. Ideal for gaming ACKs, VoIP signalling, and
+real-time control packets.
+Packets between 150–300 bytes receive the Priority UDP DSCP value.
+The micro-packet DSCP value is configurable (CS6, CS7, or EF).
 
 ### Browsing Classification
-Optionally classify web browsing traffic.
+Optionally classify web browsing traffic (HTTP/HTTPS/QUIC) with a specific
+DSCP value. Only marks CS0 traffic — does not overwrite existing marks.
 
 ### Bulk Traffic Classification
-Mark large downloads from priority devices with a lower DSCP value.
+Mark large downloads (HTTP/HTTPS) from priority devices with a lower DSCP
+value so they do not compete with real-time traffic.
+
+### Big HTTPS Auto-Downgrade
+Automatically downgrade large HTTPS packets (> 1000 bytes) from priority
+devices to the Bulk DSCP value. Prevents big downloads from stealing
+bandwidth from real-time traffic, even when using port 443.
 
 ---
 
 All required dependencies are handled automatically by the installer.
+
+---
 
 ## Requirements
 
 ### Supported system
 - OpenWrt **24.10 or newer**
 - Earlier versions may work but are **not supported nor tested**
+- OpenWrt **25.x** (apk-based) fully supported
 
 ### Required packages
 
@@ -53,10 +82,10 @@ The following packages are required for full functionality
 - `sqm-scripts` – SQM framework
 - `kmod-sched-cake` – CAKE queue discipline
 - `kmod-ifb` – IFB support (for ingress shaping)
-- `kmod-sched-ctinfo` – TC ctinfo action (DSCP restore from conntrack on ingress)
+- `kmod-sched-ctinfo` – TC ctinfo action (DSCP restore from conntrack)
 - `nftables` – DSCP marking and classification
 - `kmod-nft-core` – nftables kernel support
-- `tc` – traffic control utilities
+- `tc` / `tc-full` – traffic control utilities
 - `ip-full` – advanced IP tooling
 - `lua` – required for rpcd backend
 - `luci-lib-jsonc` – JSON handling for LuCI / rpcd
@@ -71,41 +100,54 @@ The following packages are required for full functionality
 
 - CAKE queue discipline for upload and download
 - Optional **CAKE multi-queue (cake_mq)** support for multi-core hardware
-- Optional **DSCP restore via conntrack (ctinfo)**
+- Dual-mode ingress pipeline:
+  - **ctinfo ON** → postrouting rules + kernel ctinfo restore (efficient)
+  - **ctinfo OFF** → prerouting rules mark download before IFB redirect
 - nftables-based DSCP marking (IPv4 / IPv6)
-- Early DSCP classification using **prerouting hook**
 - Separate **UDP and TCP priority classification**
-- Optional **web browsing traffic classification**
+- **Micro-packet priority** (< 150 bytes → CS6/CS7/EF)
+- **Small packet boost** (150–300 bytes → Priority DSCP)
+- **Big HTTPS auto-downgrade** (> 1000 bytes → Bulk DSCP)
+- Optional **web browsing traffic classification** (CS0-only, non-destructive)
 - Optional **bulk traffic classification**
-- IPv4 and IPv6 support
-- Automatic SQM lifecycle integration
-- Clean setup and cleanup hooks
-- Automatic dependency installation using **opkg or apk**
+- Browsing conditioned on CS0 — never overwrites existing DSCP marks
+- IPv4 and IPv6 support throughout
+- Automatic SQM lifecycle integration (start/stop/restart)
+- Clean nftables setup and teardown hooks
+- Automatic dependency installation using **opkg** or **apk**
+- Robust installer with disk space check, WAN auto-detection, dry-run mode
 
 ---
 
 ## DSCP processing pipeline
 
-Traffic classification follows this pipeline:
+### ctinfo ON (recommended)
 
-nftables prerouting → DSCP mark (download)  
-nftables postrouting → DSCP mark (upload)  
+```
+nftables postrouting
+  → DSCP mark (upload + download)
+  → Store DSCP into conntrack mark
 
-↓
-
-(optional) DSCP stored in conntrack mark  
-
-↓
-
-(optional) ctinfo restores DSCP on ingress  
-
-↓
+tc ingress (ctinfo)
+  → Restore DSCP from conntrack mark on download
 
 CAKE diffserv classification
+```
 
-This ensures that download traffic is correctly classified
-before IFB redirection, improving CAKE behaviour for
-latency-sensitive traffic such as gaming or VoIP.
+### ctinfo OFF
+
+```
+nftables prerouting
+  → DSCP mark (download — before IFB redirect)
+
+nftables postrouting
+  → Store conntrack mark only
+
+tc ingress (simple redirect)
+  → CAKE diffserv classification
+```
+
+Both modes result in correct CAKE DiffServ behaviour for all traffic directions.
 
 ---
 
@@ -113,55 +155,38 @@ latency-sensitive traffic such as gaming or VoIP.
 
 This project also installs a **real-time DSCP Connections view** in LuCI.
 
-It provides:
+### Features
 - Live conntrack-based connection monitoring
 - IPv4 and IPv6 visibility
-- Source / Destination IP + Port
-- DSCP class decoding (CS0–CS7, AFxx, EF)
-- Real-time PPS / BPS statistics
-- Sorting and filtering
-- Designed for analysis of latency-sensitive traffic
+- Source / Destination IP + Port (with full IPv6 tooltip)
+- DSCP class decoding (CS0–CS7, AFxx, EF) with colour coding:
+  - 🔴 Red — high priority (CS5, CS6, CS7, EF)
+  - 🔵 Teal — medium priority (CS3, CS4, AF3x, AF4x)
+  - 🟡 Gold — default / low priority (CS0, CS1, CS2)
+- Real-time PPS / BPS statistics with moving average
+- **Adaptive polling** — adjusts interval (1–10s) based on router load
+- **Pause / Resume** button to freeze the view for analysis
+- **Connection counter** with filter display (`X / Y total`)
+- Multi-term filter with AND logic (e.g. `192.168.1.100 udp ef`)
+- Column sorting
+- Zoom levels (50%–100%)
 
-Location in LuCI:
-- **Network → DSCP → Connections**
+Location in LuCI: **Network → DSCP → Connections**
 
-This view allows you to:
-- Verify that latency-sensitive traffic is correctly marked (CS4 / EF / etc.)
-- Instantly see which servers your console or PC is connected to
-- Validate CAKE DiffServ behavior in real time
-
----
-
-### How DSCP Connections works (technical overview)
-
-The DSCP Connections view reads active connections directly from  
-`/proc/net/nf_conntrack` via a lightweight `rpcd` backend.
-
-DSCP values are extracted from conntrack marks and decoded in real time.  
-Traffic is not intercepted, altered, or proxied — this view is purely
-observational and has **zero impact on performance**.
-
-The view is designed to:
-- Validate DSCP marking correctness
-- Observe real-time traffic behavior
-- Identify remote servers used by games or applications
-
+This view is purely observational — zero impact on performance.
 
 ---
 
-## Installation (one command)
+## Installation
 
 ### Package manager compatibility
 
-The installer automatically detects the package manager used by the system.
+The installer automatically detects the package manager:
 
 - **OpenWrt ≤ 24.x** → uses `opkg`
 - **OpenWrt ≥ 25.x** → uses `apk`
 
-The installer adapts automatically and installs all required dependencies
-using the appropriate package manager.
-
-Run the following command on your OpenWrt router:
+### One-command install
 
 ```sh
 cd /tmp && \
@@ -170,150 +195,99 @@ cd openwrt-custom-main && \
 sh install.sh
 ```
 
+### Installer options
+
+```sh
+sh install.sh --dry-run   # Show what would be done without making changes
+sh install.sh --force     # Overwrite existing SQM config without confirmation
+```
+
 ### The installer will
 
-- Install required packages
+- Check disk space and verify source files
+- Install required packages (non-blocking — continues on failure)
 - Copy all files to the correct locations
-- Enable the custom SQM script
+- Back up existing `sqm.js` and `sqm.config` as `.orig`
+- Auto-detect WAN interface
+- Pre-configure SQM via UCI
 - Restart required services
 
+---
 
 ## Post-installation steps (IMPORTANT)
 
+After installation, configure SQM in LuCI:
 
-After installation, you must configure SQM settings in LuCI:
-
-- Go to **Network → SQM QoS**
-- Configure:
-  - Interface (WAN)
-  - Download / Upload bandwidth
-  - Link layer adaptation / overhead
-- Verify that the DSCP Policies section appears in LuCI after installation
-- DSCP policy logic becomes operational only when:
-  - SQM is enabled in *Basic Settings*
-  - **Seg_Layer_Cake.qos** is selected as the active SQM script
+1. Go to **Network → SQM QoS**
+2. Configure:
+   - Interface (WAN) — verify auto-detected value
+   - Download / Upload bandwidth
+   - Link layer adaptation / overhead
+3. Go to the **DSCP Policies** tab:
+   - Enter your priority device IPv4/IPv6 addresses
+   - Enable and configure UDP/TCP priority, micro-packets, bulk, browsing
+4. Click **Save & Apply**
 
 ⚠️ The installer does not set bandwidth or overhead values automatically.
 
-### DSCP Connections (LuCI)
+DSCP policy logic becomes operational only when:
+- SQM is enabled in *Basic Settings*
+- **Seg_Layer_Cake.qos** is selected as the active SQM script
 
-DSCP Connections is a later addition to the project, focused on real-time visibility and validation rather than traffic shaping.
+### DSCP Connections
 
-After installation, a **DSCP Connections** menu is available in LuCI:
+After installation, go to **Network → DSCP → Connections** for the
+real-time connection view. No configuration required — read-only.
 
-- Go to **Network → DSCP → Connections**
-- This view is read-only and does not require any configuration
-- It works independently from SQM and DSCP policy logic
-
-You can use it to:
-- Verify DSCP markings applied to live traffic
-- Observe real-time connections (IPv4 / IPv6)
-- Identify remote servers used by applications or services
-- Validate CAKE DiffServ behavior
-
-No bandwidth, interface, or firewall configuration is required.
-
+---
 
 ## Files installed
 
 | Component | Destination |
-|---------|-------------|
-| Seg_Layer_Cake.qos | /usr/lib/sqm/ |
-| sqm.config | /etc/config/sqm |
-| sqm.js (custom SQM LuCI view) | /www/luci-static/resources/view/network/ |
-| DSCP Connections view | /www/luci-static/resources/view/dscp/ |
-| rpcd backend (luci.dscp) | /usr/libexec/rpcd/ |
-| LuCI menu entry | /usr/share/luci/menu.d/ |
-| LuCI ACL rules | /usr/share/rpcd/acl.d/ |
+|-----------|-------------|
+| `Seg_Layer_Cake.qos` | `/usr/lib/sqm/` |
+| `sqm.config` | `/etc/config/sqm` |
+| `sqm.js` (custom SQM LuCI view) | `/www/luci-static/resources/view/network/` |
+| `connections.js` (DSCP Connections view) | `/www/luci-static/resources/view/dscp/` |
+| `luci.dscp` (rpcd backend) | `/usr/libexec/rpcd/` |
+| LuCI menu entry | `/usr/share/luci/menu.d/` |
+| LuCI ACL rules | `/usr/share/rpcd/acl.d/` |
 
-
-## Notes
-- DSCP policy logic does not require manual DiffServ configuration in LuCI.
-  When using Seg_Layer_Cake.qos, CAKE automatically operates in DiffServ mode and honors DSCP markings.
-- This project does not override existing firewall rules.
-- nftables rules are created dynamically and cleaned up properly.
-- Designed for users familiar with OpenWrt and SQM.
-- The nftables table `sqm_dscp` is created and removed dynamically on SQM start/stop.
-- The original LuCI SQM view is backed up as `sqm.js.orig` during installation.
+---
 
 ## Uninstallation
 
-⚠️ Important
-
-This project creates nftables rules dynamically via SQM lifecycle hooks.
-Before removing any files, SQM must be disabled or stopped, otherwise
-DSCP rules may remain active.
-
-Step 1: Disable SQM
-
-Disable SQM in LuCI (Network → SQM QoS):
-
-Uncheck Enable this SQM instance
-
-Click Save & Apply
-
-—or from CLI—
+Simply run:
 
 ```sh
-uci set sqm.@queue[0].enabled='0'
-uci commit sqm
-/etc/init.d/sqm stop
+sh uninstall.sh
 ```
 
-Stopping SQM ensures that:
+The uninstaller will:
+1. Stop SQM and remove nftables rules cleanly
+2. Restore the original `sqm.js` from backup
+3. Remove `Seg_Layer_Cake.qos`
+4. Restore the original `sqm.config` from backup
+5. Remove the DSCP Connections view and rpcd backend
+6. Restart LuCI services
 
-CAKE qdiscs are removed
-
-IFB interfaces are cleaned up
-
-the inet sqm_dscp nftables table is deleted correctly
-
-
-To remove the DSCP policy setup:
-
-Step 2: Restore the original LuCI SQM view (optional)
-
-If you want to restore the stock LuCI SQM interface:
+### Uninstaller options
 
 ```sh
-cp /www/luci-static/resources/view/network/sqm.js.orig \
-   /www/luci-static/resources/view/network/sqm.js
+sh uninstall.sh --dry-run      # Show what would be done without changes
+sh uninstall.sh --force        # No interactive confirmation
+sh uninstall.sh --keep-config  # Keep /etc/config/sqm as-is
 ```
 
-Step 3: Remove the custom SQM script:
-
-```sh
-rm /usr/lib/sqm/Seg_Layer_Cake.qos
-```
-Step 4: Restart LuCI services:
-
-```sh
-/etc/init.d/uhttpd restart
-/etc/init.d/rpcd restart
-```
-### Optional: Remove DSCP Connections view
-
-To completely remove the DSCP Connections LuCI view:
-
-```sh
-rm -f /www/luci-static/resources/view/dscp/connections.js
-rm -f /usr/libexec/rpcd/luci.dscp
-rm -f /usr/share/luci/menu.d/luci-app-dscp.json
-rm -f /usr/share/rpcd/acl.d/luci-app-dscp.json
-```
-
-Restart LuCI services:
-
-```sh
-/etc/init.d/uhttpd restart
-/etc/init.d/rpcd restart
-```
+---
 
 ## Notes
 
-Removing DSCP Connections does not affect SQM, CAKE, or nftables
-once SQM has been stopped
-
-No firewall rules are modified outside of SQM lifecycle
-
-The system is restored to a clean OpenWrt state
+- DSCP policy logic does not require manual DiffServ configuration in LuCI.
+  CAKE automatically operates in DiffServ mode when using `Seg_Layer_Cake.qos`.
+- This project does not override existing firewall rules.
+- nftables rules are created and removed dynamically on SQM start/stop.
+- The nftables table `sqm_dscp` is fully managed by the SQM lifecycle.
+- Original files are backed up as `.orig` during installation.
+- Compatible with Lua 5.1 (OpenWrt rpcd environment).
+- Designed for users familiar with OpenWrt and SQM.

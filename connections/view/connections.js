@@ -3,476 +3,579 @@
 'require poll';
 'require rpc';
 'require ui';
-'require form';
 
-var callDSCPConntrackDSCP = rpc.declare({
+// =============================================================================
+// RPC call declaration
+// =============================================================================
+var callGetConntrackDSCP = rpc.declare({
     object: 'luci.dscp',
     method: 'getConntrackDSCP',
-    expect: { }
+    expect: {}
 });
 
-var dscpToString = function(mark) {
-    var dscp = mark & 0x3F;
-    var dscpMap = {
-        0: 'CS0',
-        8: 'CS1',
-        10: 'AF11',
-        12: 'AF12',
-        14: 'AF13',
-        16: 'CS2',
-        18: 'AF21',
-        20: 'AF22',
-        22: 'AF23',
-        24: 'CS3',
-        26: 'AF31',
-        28: 'AF32',
-        30: 'AF33',
-        32: 'CS4',
-        34: 'AF41',
-        36: 'AF42',
-        38: 'AF43',
-        40: 'CS5',
-        46: 'EF',
-        48: 'CS6',
-        56: 'CS7'
+// =============================================================================
+// DSCP value → label mapping
+// =============================================================================
+var DSCP_MAP = {
+    0:  'CS0',
+    8:  'CS1',
+    10: 'AF11', 12: 'AF12', 14: 'AF13',
+    16: 'CS2',
+    18: 'AF21', 20: 'AF22', 22: 'AF23',
+    24: 'CS3',
+    26: 'AF31', 28: 'AF32', 30: 'AF33',
+    32: 'CS4',
+    34: 'AF41', 36: 'AF42', 38: 'AF43',
+    40: 'CS5',
+    46: 'EF',
+    48: 'CS6',
+    56: 'CS7'
+};
+
+function dscpToString(mark) {
+    var dscp = (mark || 0) & 0x3F;
+    return DSCP_MAP[dscp] || String(dscp);
+}
+
+// =============================================================================
+// DSCP colour coding
+// Rouge  = haute priorité  (CS5, CS6, CS7, EF)
+// Teal   = priorité moyenne (CS3, CS4, AFx1-AFx3)
+// Or     = défaut / basse  (tout le reste)
+// =============================================================================
+function getDscpColor(dscpName) {
+    var name = String(dscpName).toUpperCase();
+    if (['CS5', 'CS6', 'CS7', 'EF'].indexOf(name) !== -1)
+        return '#FF4500';
+    if (['CS3', 'CS4', 'AF31', 'AF32', 'AF33', 'AF41', 'AF42', 'AF43'].indexOf(name) !== -1)
+        return '#00CED1';
+    return '#FFD700';
+}
+
+// =============================================================================
+// Formatting helpers
+// =============================================================================
+function formatBytes(bytes) {
+    var units = ['B', 'KiB', 'MiB', 'GiB', 'TiB'];
+    bytes = Number(bytes) || 0;
+    if (bytes === 0) return '0 B';
+    var i = Math.min(Math.floor(Math.log(bytes) / Math.log(1024)), units.length - 1);
+    return (bytes / Math.pow(1024, i)).toFixed(2) + ' ' + units[i];
+}
+
+function toKbps(bytesPerSec) {
+    return ((Number(bytesPerSec) || 0) * 8 / 1000).toFixed(2) + ' Kbit/s';
+}
+
+function shortIPv6(ip) {
+    if (!ip || ip.indexOf(':') === -1) return ip;
+    var parts = ip.split(':').filter(Boolean);
+    if (parts.length <= 3) return ip;
+    var short = parts[0] + ':' + parts[1] + '::' + parts[parts.length - 1];
+    return short.length > 18 ? short.slice(0, 18) + '…' : short;
+}
+
+function formatAddr(ip, port) {
+    if (!ip) return '-';
+    var p = (port && port !== '-') ? ':' + port : '';
+    if (ip.indexOf(':') !== -1) return shortIPv6(ip) + p;
+    return ip + p;
+}
+
+function fullAddr(ip, port) {
+    if (!ip) return '-';
+    return ip + ((port && port !== '-') ? ':' + port : '');
+}
+
+// =============================================================================
+// Moving average history helper
+// =============================================================================
+var HISTORY_LEN = 10;
+
+function updateHistory(hist, inPkts, outPkts, inBytes, outBytes, timeDiff) {
+    if (!hist) return null;
+
+    if (timeDiff > 0) {
+        hist.inPpsH.push(Math.max(0, Math.round((inPkts  - hist.lastInPkts)  / timeDiff)));
+        hist.outPpsH.push(Math.max(0, Math.round((outPkts - hist.lastOutPkts) / timeDiff)));
+        hist.inBpsH.push(Math.max(0, Math.round((inBytes  - hist.lastInBytes)  / timeDiff)));
+        hist.outBpsH.push(Math.max(0, Math.round((outBytes - hist.lastOutBytes) / timeDiff)));
+
+        if (hist.inPpsH.length > HISTORY_LEN) {
+            hist.inPpsH.shift(); hist.outPpsH.shift();
+            hist.inBpsH.shift(); hist.outBpsH.shift();
+        }
+    }
+
+    hist.lastInPkts   = inPkts;
+    hist.lastOutPkts  = outPkts;
+    hist.lastInBytes  = inBytes;
+    hist.lastOutBytes = outBytes;
+
+    var avg = function(arr) {
+        return arr.length
+            ? Math.round(arr.reduce(function(a, b) { return a + b; }, 0) / arr.length)
+            : 0;
     };
-    return dscpMap[dscp] || dscp.toString();
-};
+    var max = function(arr) {
+        return arr.length ? Math.max.apply(null, arr) : 0;
+    };
 
-var formatSize = function(bytes) {
-    var sizes = ['B', 'KiB', 'MiB', 'GiB', 'TiB', 'PiB'];
-    if (bytes == 0) return '0 B';
-    var i = parseInt(Math.floor(Math.log(bytes) / Math.log(1024)));
-    return Math.round(bytes / Math.pow(1024, i) * 100) / 100 + ' ' + sizes[i];
-};
+    return {
+        avgInPps:  avg(hist.inPpsH),
+        avgOutPps: avg(hist.outPpsH),
+        maxInPps:  max(hist.inPpsH),
+        maxOutPps: max(hist.outPpsH),
+        avgInBps:  avg(hist.inBpsH),
+        avgOutBps: avg(hist.outBpsH)
+    };
+}
 
-var convertToKbps = function(bytesPerSecond) {
-    return (bytesPerSecond * 8 / 1000).toFixed(2) + ' Kbit/s';
-};
-var formatIPv6 = function(ipv6) {
-    if (!ipv6.includes(':')) return ipv6; // Si ce n'est pas une IPv6, la retourner telle quelle
-    
-    // Tronquer les blocs, en prenant les 2 premiers et 1 dernier bloc
-    let parts = ipv6.split(':').filter(Boolean); // Supprime les "::" pour travailler avec les blocs
-    if (parts.length <= 3) return ipv6; // Si l'adresse est courte, on ne la modifie pas
+// =============================================================================
+// Adaptive polling
+// Mesure le temps de réponse rpcd et ajuste l'intervalle automatiquement :
+//   > 2000ms réponse → ralentit jusqu'à 10s max
+//   < 1000ms réponse → accélère jusqu'à 1s min
+// =============================================================================
+function adaptivePoll(self) {
+    if (!self.autoRefresh) return;
 
-    // Combine les blocs essentiels et coupe à 16 caractères maximum
-    let truncated = `${parts[0]}:${parts[1]}::${parts[parts.length - 1]}`;
-    return truncated.length > 16 ? truncated.slice(0, 16) : truncated; // Limite stricte à 16 caractères
-};
+    var startTime = Date.now();
 
+    callGetConntrackDSCP().then(function(result) {
+        var responseTime = Date.now() - startTime;
 
-return view.extend({
-    pollInterval: 1,
-    lastData: {},
-    filter: '',
-    sortColumn: 'bytes',
-    sortDescending: true,
-    connectionHistory: {},
-    historyLength: 10,
-    lastUpdateTime: 0,
-
-    load: function() {
-        return Promise.all([
-            callDSCPConntrackDSCP()
-        ]);
-    },
-
-    render: function(data) {
-        var view = this;
-        var connections = [];
-        if (data[0] && data[0].connections) {
-            connections = Object.values(data[0].connections);
+        // Premier poll : démarre à 3s pour laisser le temps au système
+        if (!self.hasPolledOnce) {
+            self.pollInterval = 3;
+            self.hasPolledOnce = true;
+        } else if (responseTime > 2000) {
+            self.pollInterval = Math.min(self.pollInterval + 1, 10);
+        } else if (responseTime < 1000 && self.pollInterval > 1) {
+            self.pollInterval = Math.max(self.pollInterval - 1, 1);
         }
 
+        // Mise à jour affichage intervalle
+        var pollDisplay = document.getElementById('dscp_poll_interval');
+        if (pollDisplay) {
+            pollDisplay.textContent = _('Polling: ') + self.pollInterval + 's';
+        }
+
+        if (result && result.connections) {
+            self.renderRows(Object.values(result.connections));
+        } else {
+            self._showError(_('No connection data received'));
+        }
+
+    }).catch(function(err) {
+        console.error('DSCP poll error:', err);
+        self._showError(_('Connection error — check rpcd service'));
+
+    }).finally(function() {
+        if (self.autoRefresh) {
+            self.refreshTimeout = setTimeout(function() {
+                adaptivePoll(self);
+            }, self.pollInterval * 1000);
+        }
+    });
+}
+
+// =============================================================================
+// View definition
+// =============================================================================
+return view.extend({
+
+    // State
+    pollInterval:      3,
+    filter:            '',
+    sortColumn:        'bytes',
+    sortDescending:    true,
+    lastData:          {},
+    connectionHistory: {},
+    lastUpdateTime:    0,
+    tableEl:           null,
+    autoRefresh:       true,
+    refreshTimeout:    null,
+    hasPolledOnce:     false,
+
+    // ------------------------------------------------------------------
+    // load() — données initiales
+    // ------------------------------------------------------------------
+    load: function() {
+        return callGetConntrackDSCP();
+    },
+
+    // ------------------------------------------------------------------
+    // render() — construction du DOM
+    // ------------------------------------------------------------------
+    render: function(data) {
+        var self = this;
+        var initialConns = (data && data.connections)
+            ? Object.values(data.connections)
+            : [];
+
+        // --- Filtre ---
         var filterInput = E('input', {
-            'type': 'text',
-            'placeholder': _('Filter by IP, IP:Port, Port, Protocol or DSCP'),
-            'style': 'margin-bottom: 10px; width: 300px;',
-            'value': view.filter
+            type:        'text',
+            placeholder: _('Filter: IP, port, protocol, DSCP — multiple terms with spaces (AND logic)'),
+            style:       'width:340px; margin-right:8px;',
+            value:       self.filter
         });
-
         filterInput.addEventListener('input', function(ev) {
-            view.filter = ev.target.value.toLowerCase();
-            view.updateTable(connections);
+            self.filter = ev.target.value.toLowerCase();
+            self.renderRows(Object.values(self.lastData));
         });
-		// Bouton pour trier par DSCP (Non-CS0 en premier)
-		var dscpSortButton = E('button', {
-			'class': 'cbi-button cbi-button-add',
-			'style': 'margin-left: 10px;',
-			'click': function() {
-				var sortedConnections = connections.sort(function(a, b) {
-					if (a.dscp !== 0 && b.dscp === 0) return -1; // Non-CS0 avant CS0
-					if (a.dscp === 0 && b.dscp !== 0) return 1;  // CS0 après tout le reste
-					return 0; // Sinon, ne pas changer l'ordre
-				});
-				view.updateTable(sortedConnections); // Mettre à jour la table triée
-			}
-		}, _('Sort by DSCP (Non-CS0 first)'));
 
+        // --- Bouton tri DSCP ---
+        var dscpBtn = E('button', {
+            class: 'cbi-button cbi-button-add',
+            style: 'margin-right:8px;',
+            click: function() {
+                self.sortColumn     = 'dscp';
+                self.sortDescending = true;
+                self.renderRows(Object.values(self.lastData));
+            }
+        }, _('Sort by DSCP (active first)'));
 
-        var table = E('table', { 'class': 'table cbi-section-table', 'id': 'dscp_connections' }, [
-            E('tr', { 'class': 'tr table-titles' }, [
-                E('th', { 'class': 'th' }, E('a', { 'href': '#', 'click': this.sortTable.bind(this, 'protocol') }, [ _('Protocol'), this.createSortIndicator('protocol') ])),
-                E('th', { 'class': 'th' }, E('a', { 'href': '#', 'click': this.sortTable.bind(this, 'src') }, [ _('Source & Port'), this.createSortIndicator('src') ])),
-                E('th', { 'class': 'th' }, E('a', { 'href': '#', 'click': this.sortTable.bind(this, 'dst') }, [ _('Destination & Port'), this.createSortIndicator('dst') ])),
-                E('th', { 'class': 'th' }, E('a', { 'href': '#', 'click': this.sortTable.bind(this, 'dscp') }, [ _('DSCP'), this.createSortIndicator('dscp') ])),
-                E('th', { 'class': 'th' }, E('a', { 'href': '#', 'click': this.sortTable.bind(this, 'bytes') }, [ _('Bytes'), this.createSortIndicator('bytes') ])),
-                E('th', { 'class': 'th' }, E('a', { 'href': '#', 'click': this.sortTable.bind(this, 'packets') }, [ _('Packets'), this.createSortIndicator('packets') ])),
-                E('th', { 'class': 'th' }, E('a', { 'href': '#', 'click': this.sortTable.bind(this, 'avgPps') }, [ _('Avg PPS'), this.createSortIndicator('avgPps') ])),
-                E('th', { 'class': 'th' }, E('a', { 'href': '#', 'click': this.sortTable.bind(this, 'maxPps') }, [ _('Max PPS'), this.createSortIndicator('maxPps') ])),
-                E('th', { 'class': 'th' }, E('a', { 'href': '#', 'click': this.sortTable.bind(this, 'avgBps') }, [ _('Avg BPS'), this.createSortIndicator('avgBps') ]))
+        // --- Bouton Pause / Resume ---
+        var pauseBtn = E('button', {
+            class: 'cbi-button cbi-button-neutral',
+            style: 'margin-right:8px;'
+        }, _('Pause'));
+
+        pauseBtn.addEventListener('click', function() {
+            if (self.autoRefresh) {
+                clearTimeout(self.refreshTimeout);
+                self.autoRefresh     = false;
+                pauseBtn.textContent = _('Resume');
+                pauseBtn.className   = 'cbi-button cbi-button-action';
+            } else {
+                self.autoRefresh     = true;
+                pauseBtn.textContent = _('Pause');
+                pauseBtn.className   = 'cbi-button cbi-button-neutral';
+                adaptivePoll(self);
+            }
+        });
+
+        // --- Zoom ---
+        var zoomSelect = E('select', {
+            class:  'zoom-select',
+            change: function(ev) {
+                var t = self.tableEl;
+                t.className = t.className.replace(/\bzoom-\d+\b/g, '').trim();
+                t.classList.add(ev.target.value);
+            }
+        }, ['100','90','80','70','60','50'].map(function(z) {
+            return E('option', { value: 'zoom-' + z }, z + '%');
+        }));
+
+        // --- Compteur de connexions ---
+        var connCount = E('span', {
+            id:    'dscp_conn_count',
+            style: 'font-weight:bold; margin-left:12px; line-height:2.5em;'
+        }, _('Connections: 0'));
+
+        // --- Affichage intervalle de poll ---
+        var pollDisplay = E('span', {
+            id:    'dscp_poll_interval',
+            style: 'margin-left:12px; color:#888; font-size:0.85em;'
+        }, _('Polling: 3s'));
+
+        // --- Colonnes de la table ---
+        var cols = [
+            { key: 'protocol', label: _('Protocol')           },
+            { key: 'src',      label: _('Source & Port')      },
+            { key: 'dst',      label: _('Destination & Port') },
+            { key: 'dscp',     label: _('DSCP')               },
+            { key: 'bytes',    label: _('Bytes')              },
+            { key: 'packets',  label: _('Packets')            },
+            { key: 'avgPps',   label: _('Avg PPS')            },
+            { key: 'maxPps',   label: _('Max PPS')            },
+            { key: 'avgBps',   label: _('Avg BPS')            }
+        ];
+
+        var headerRow = E('tr', { class: 'tr table-titles' },
+            cols.map(function(col) {
+                var indicator = E('span', {
+                    class:      'sort-indicator',
+                    'data-col': col.key
+                }, '');
+                var link = E('a', {
+                    href:  '#',
+                    click: function(ev) {
+                        ev.preventDefault();
+                        setTimeout(function() {
+                            if (self.sortColumn === col.key) {
+                                self.sortDescending = !self.sortDescending;
+                            } else {
+                                self.sortColumn     = col.key;
+                                self.sortDescending = true;
+                            }
+                            self.renderRows(Object.values(self.lastData));
+                        }, 0);
+                    }
+                }, [col.label, indicator]);
+                return E('th', { class: 'th' }, link);
+            })
+        );
+
+        var table = E('table', {
+            class: 'table cbi-section-table zoom-100',
+            id:    'dscp_connections'
+        }, [headerRow]);
+
+        self.tableEl = table;
+
+        // --- CSS ---
+        var style = E('style', {}, [
+            '.sort-indicator { display:inline-block; margin-left:4px; }',
+            '.zoom-100 { font-size:1rem; }',
+            '.zoom-90  { font-size:.9rem; }',
+            '.zoom-80  { font-size:.8rem; }',
+            '.zoom-70  { font-size:.7rem; }',
+            '.zoom-60  { font-size:.6rem; }',
+            '.zoom-50  { font-size:.5rem; }',
+            '.cbi-section-table td, .cbi-section-table th {',
+            '  white-space:nowrap; overflow:hidden; text-overflow:ellipsis;',
+            '  max-width:160px; padding:.3rem; }',
+            '@media(max-width:600px){',
+            '  .cbi-section-table td:nth-child(5),',
+            '  .cbi-section-table th:nth-child(5),',
+            '  .cbi-section-table td:nth-child(6),',
+            '  .cbi-section-table th:nth-child(6){ display:none; }}'
+        ].join('\n'));
+
+        // Rendu initial + démarrage polling adaptatif
+        self.renderRows(initialConns);
+        adaptivePoll(self);
+
+        return E('div', { class: 'cbi-map' }, [
+            style,
+            E('h2', _('DSCP Connections')),
+            E('div', {
+                style: 'margin-bottom:10px; display:flex; flex-wrap:wrap; gap:6px; align-items:center;'
+            }, [
+                filterInput,
+                dscpBtn,
+                pauseBtn,
+                E('label', { style: 'margin-left:4px;' }, _('Zoom:')),
+                zoomSelect,
+                pollDisplay,
+                connCount
+            ]),
+            E('div', { class: 'cbi-section' }, [
+                E('div', {
+                    class: 'cbi-section-node',
+                    style: 'overflow-x:auto;'
+                }, [table])
             ])
         ]);
+    },
 
-        view.updateTable = function(connections) {
-            // Remove all rows except the header
-            while (table.rows.length > 1) {
-                table.deleteRow(1);
-            }
-        
-            var currentTime = Date.now() / 1000;
-            var timeDiff = currentTime - view.lastUpdateTime;
-            view.lastUpdateTime = currentTime;
-        
-            connections.forEach(function(conn) {
-                var key = conn.layer3 + conn.protocol + conn.src + conn.sport + conn.dst + conn.dport;
-                var lastConn = view.lastData[key];
-                
-                if (!view.connectionHistory[key]) {
-                    view.connectionHistory[key] = {
-                        inPpsHistory: [],
-                        outPpsHistory: [],
-                        inBpsHistory: [],
-                        outBpsHistory: [],
-                        lastInPackets: conn.in_packets,
-                        lastOutPackets: conn.out_packets,
-                        lastInBytes: conn.in_bytes,
-                        lastOutBytes: conn.out_bytes,
-                        lastTimestamp: currentTime
+    // ------------------------------------------------------------------
+    // _showError() — message d'erreur dans la table
+    // ------------------------------------------------------------------
+    _showError: function(msg) {
+        var table = this.tableEl;
+        if (!table) return;
+        while (table.rows.length > 1) table.deleteRow(1);
+        table.appendChild(E('tr', { class: 'tr' }, [
+            E('td', {
+                class:   'td',
+                colspan: '9',
+                style:   'text-align:center; color:red; padding:20px;'
+            }, msg)
+        ]));
+    },
+
+    // ------------------------------------------------------------------
+    // renderRows() — reconstruction du corps de la table
+    // ------------------------------------------------------------------
+    renderRows: function(conns) {
+        var self  = this;
+        var table = self.tableEl;
+        if (!table) return;
+
+        try {
+            var now      = Date.now() / 1000;
+            var timeDiff = now - (self.lastUpdateTime || now);
+            self.lastUpdateTime = now;
+
+            // Calcul stats par connexion
+            conns.forEach(function(conn) {
+                var key = conn.layer3 + ':' + conn.protocol + ':' +
+                          conn.src    + ':' + (conn.sport || '-') + ':' +
+                          conn.dst    + ':' + (conn.dport || '-');
+
+                if (!self.connectionHistory[key]) {
+                    self.connectionHistory[key] = {
+                        inPpsH: [], outPpsH: [], inBpsH: [], outBpsH: [],
+                        lastInPkts:   Number(conn.in_packets)  || 0,
+                        lastOutPkts:  Number(conn.out_packets) || 0,
+                        lastInBytes:  Number(conn.in_bytes)    || 0,
+                        lastOutBytes: Number(conn.out_bytes)   || 0
                     };
                 }
-        
-                var history = view.connectionHistory[key];
-                var instantInPps = 0, instantOutPps = 0, instantInBps = 0, instantOutBps = 0;
-        
-                if (lastConn && timeDiff > 0) {
-                    var inPacketDiff = Math.max(0, conn.in_packets - history.lastInPackets);
-                    var outPacketDiff = Math.max(0, conn.out_packets - history.lastOutPackets);
-                    var inBytesDiff = Math.max(0, conn.in_bytes - history.lastInBytes);
-                    var outBytesDiff = Math.max(0, conn.out_bytes - history.lastOutBytes);
-                    
-                    instantInPps = Math.round(inPacketDiff / timeDiff);
-                    instantOutPps = Math.round(outPacketDiff / timeDiff);
-                    instantInBps = Math.round(inBytesDiff / timeDiff);
-                    instantOutBps = Math.round(outBytesDiff / timeDiff);
-        
-                    history.inPpsHistory.push(instantInPps);
-                    history.outPpsHistory.push(instantOutPps);
-                    history.inBpsHistory.push(instantInBps);
-                    history.outBpsHistory.push(instantOutBps);
-        
-                    if (history.inPpsHistory.length > view.historyLength) {
-                        history.inPpsHistory.shift();
-                        history.outPpsHistory.shift();
-                        history.inBpsHistory.shift();
-                        history.outBpsHistory.shift();
-                    }
-                }
-        
-                history.lastInPackets = conn.in_packets;
-                history.lastOutPackets = conn.out_packets;
-                history.lastInBytes = conn.in_bytes;
-                history.lastOutBytes = conn.out_bytes;
-                history.lastTimestamp = currentTime;
-        
-                var avgInPps = Math.round(history.inPpsHistory.reduce((a, b) => a + b, 0) / history.inPpsHistory.length) || 0;
-                var avgOutPps = Math.round(history.outPpsHistory.reduce((a, b) => a + b, 0) / history.outPpsHistory.length) || 0;
-                var avgInBps = Math.round(history.inBpsHistory.reduce((a, b) => a + b, 0) / history.inBpsHistory.length) || 0;
-                var avgOutBps = Math.round(history.outBpsHistory.reduce((a, b) => a + b, 0) / history.outBpsHistory.length) || 0;
-                var maxInPps = Math.max(...history.inPpsHistory, 0);
-                var maxOutPps = Math.max(...history.outPpsHistory, 0);
-        
-                conn.avgInPps = avgInPps;
-                conn.avgOutPps = avgOutPps;
-                conn.maxInPps = maxInPps;
-                conn.maxOutPps = maxOutPps;
-                conn.avgInBps = avgInBps;
-                conn.avgOutBps = avgOutBps;
-                view.lastData[key] = conn;
+
+                var hist  = self.connectionHistory[key];
+                var stats = updateHistory(
+                    hist,
+                    Number(conn.in_packets)  || 0,
+                    Number(conn.out_packets) || 0,
+                    Number(conn.in_bytes)    || 0,
+                    Number(conn.out_bytes)   || 0,
+                    timeDiff
+                );
+
+                conn._key   = key;
+                conn._stats = stats || {
+                    avgInPps:0, avgOutPps:0,
+                    maxInPps:0, maxOutPps:0,
+                    avgInBps:0, avgOutBps:0
+                };
+                self.lastData[key] = conn;
             });
-        
-            connections.sort(view.sortFunction.bind(view));
-        
-            connections.forEach(function(conn) {
-                var srcFull = conn.src.includes(':') ? formatIPv6(conn.src) + ':' + (conn.sport || '-') : conn.src + ':' + (conn.sport || '-');
-				var dstFull = conn.dst.includes(':') ? formatIPv6(conn.dst) + ':' + (conn.dport || '-') : conn.dst + ':' + (conn.dport || '-');
 
-                var dscpString = dscpToString(conn.dscp);
-                
-                if (view.filter && !(
-                    conn.protocol.toLowerCase().includes(view.filter) ||
-                    srcFull.toLowerCase().includes(view.filter) ||
-                    dstFull.toLowerCase().includes(view.filter) ||
-                    dscpString.toLowerCase().includes(view.filter)
-                )) {
-                    return;
-                }
-
-                var srcFull = conn.src + (conn.sport !== "-" ? ':' + conn.sport : '');
-                var dstFull = conn.dst + (conn.dport !== "-" ? ':' + conn.dport : ''); 
-								
-				// Fonction pour définir les couleurs des DSCP selon les priorités
-				var getDSCPColor = function(dscpName) {
-					// S'assurer que le DSCP est bien une chaîne et en majuscules
-					dscpName = String(dscpName).toUpperCase();
-
-					if (['CS5', 'CS6', 'CS7', 'EF'].includes(dscpName)) { // Priorité haute
-						return '#FF4500'; // Rouge
-					} else if (['CS3', 'CS4', 'AF31', 'AF32', 'AF33', 'AF41', 'AF42', 'AF43'].includes(dscpName)) { // Priorité moyenne
-						return '#00CED1'; // Bleu clair
-					} else { // Priorité basse
-						return '#FFD700'; // Jaune
-					}
-				};
-
-				table.appendChild(E('tr', { 'class': 'tr' }, [
-				E('td', { 'class': 'td' }, conn.protocol.toUpperCase()),
-				E('td', { 'class': 'td' }, 
-					conn.src.includes(':') 
-					? E('span', { 'title': conn.src }, formatIPv6(conn.src) + ':' + (conn.sport || '-'))
-					: srcFull
-				),
-				E('td', { 'class': 'td' }, 
-					conn.dst.includes(':') 
-					? E('span', { 'title': conn.dst }, formatIPv6(conn.dst) + ':' + (conn.dport || '-'))
-					: dstFull
-				),
-				// Utilisation de getDSCPColor pour définir la couleur du DSCP
-				E('td', { 'class': 'td', 'style': 'color: ' + getDSCPColor(dscpString) }, dscpString),
-				E('td', { 'class': 'td' }, 
-					E('div', {}, [
-						E('span', {}, _('In: ') + formatSize(conn.in_bytes)),
-						E('br'),
-						E('span', {}, _('Out: ') + formatSize(conn.out_bytes))
-					])
-				),
-				E('td', { 'class': 'td' }, 
-					E('div', {}, [
-						E('span', {}, _('In: ') + conn.in_packets),
-						E('br'),
-						E('span', {}, _('Out: ') + conn.out_packets)
-					])
-				),
-				E('td', { 'class': 'td' }, 
-					E('div', {}, [
-						E('span', {}, _('In: ') + conn.avgInPps),
-						E('br'),
-						E('span', {}, _('Out: ') + conn.avgOutPps)
-					])
-				),
-				E('td', { 'class': 'td' }, 
-					E('div', {}, [
-						E('span', {}, _('In: ') + conn.maxInPps),
-						E('br'),
-						E('span', {}, _('Out: ') + conn.maxOutPps)
-					])
-				),
-				E('td', { 'class': 'td' }, 
-					E('div', {}, [
-						E('span', {}, _('In: ') + convertToKbps(conn.avgInBps)),
-						E('br'),
-						E('span', {}, _('Out: ') + convertToKbps(conn.avgOutBps))
-					])
-				)
-			]));
-
+            // Tri
+            var sorted = conns.slice().sort(function(a, b) {
+                return self._sortValue(a, b);
             });
-            view.updateSortIndicators();            
-        };
 
-        view.updateTable(connections);
-        this.updateSortIndicators();
+            // Filtre multi-termes (ET entre termes, OU entre champs)
+            var tokens = self.filter
+                ? self.filter.split(/\s+/).filter(Boolean)
+                : [];
 
-        poll.add(function() {
-            return callDSCPConntrackDSCP().then(function(result) {
-                if (result && result.connections) {
-                    view.updateTable(Object.values(result.connections));
-                } else {
-                    console.error('Invalid data received:', result);
+            // Reconstruction du tbody
+            while (table.rows.length > 1) table.deleteRow(1);
+
+            var displayed = 0;
+
+            sorted.forEach(function(conn) {
+                var dscpStr = dscpToString(conn.dscp);
+                var srcDisp = formatAddr(conn.src, conn.sport);
+                var dstDisp = formatAddr(conn.dst, conn.dport);
+                var srcFull = fullAddr(conn.src,  conn.sport);
+                var dstFull = fullAddr(conn.dst,  conn.dport);
+                var proto   = (conn.protocol || '').toUpperCase();
+                var s       = conn._stats;
+
+                // Application du filtre
+                if (tokens.length > 0) {
+                    var fields = [
+                        proto.toLowerCase(),
+                        srcFull.toLowerCase(),
+                        dstFull.toLowerCase(),
+                        dscpStr.toLowerCase()
+                    ];
+                    var pass = tokens.every(function(t) {
+                        return fields.some(function(f) { return f.includes(t); });
+                    });
+                    if (!pass) return;
                 }
+
+                displayed++;
+
+                var inOut = function(inVal, outVal) {
+                    return E('div', {}, [
+                        E('span', {}, '↓ ' + inVal),
+                        E('br'),
+                        E('span', {}, '↑ ' + outVal)
+                    ]);
+                };
+
+                table.appendChild(E('tr', { class: 'tr' }, [
+                    E('td', { class: 'td' }, proto),
+                    E('td', { class: 'td', title: srcFull }, srcDisp),
+                    E('td', { class: 'td', title: dstFull }, dstDisp),
+                    E('td', {
+                        class: 'td',
+                        style: 'color:' + getDscpColor(dscpStr) + '; font-weight:bold;'
+                    }, dscpStr),
+                    E('td', { class: 'td' }, inOut(
+                        formatBytes(conn.in_bytes),
+                        formatBytes(conn.out_bytes)
+                    )),
+                    E('td', { class: 'td' }, inOut(
+                        Number(conn.in_packets)  || 0,
+                        Number(conn.out_packets) || 0
+                    )),
+                    E('td', { class: 'td' }, inOut(s.avgInPps,  s.avgOutPps)),
+                    E('td', { class: 'td' }, inOut(s.maxInPps,  s.maxOutPps)),
+                    E('td', { class: 'td' }, inOut(
+                        toKbps(s.avgInBps),
+                        toKbps(s.avgOutBps)
+                    ))
+                ]));
             });
-        }, view.pollInterval);
 
-        var style = E('style', {}, `
-            .sort-indicator {
-                display: inline-block;
-                width: 0;
-                height: 0;
-                margin-left: 5px;
-                vertical-align: middle;
-            }
-            .table-wrapper {
-                overflow-x: auto;
-                max-width: 100%;
-            }
-            .cbi-section-table {
-                min-width: 100%;
-                font-size: 0.8rem;
-            }
-            .cbi-section-table td, .cbi-section-table th {
-                white-space: nowrap;
-                overflow: hidden;
-                text-overflow: ellipsis;
-                max-width: 150px;
-                padding: 0.3rem;
-            }
-            @media screen and (max-width: 600px) {
-                .cbi-section-table td:nth-child(5),
-                .cbi-section-table th:nth-child(5),
-                .cbi-section-table td:nth-child(6),
-                .cbi-section-table th:nth-child(6) {
-                    display: none;
-                }
-            }
-            /* Styles for different zoom levels */
-            .cbi-section-table.zoom-100 { font-size: 1rem !important; }
-            .cbi-section-table.zoom-90 { font-size: 0.9rem !important; }
-            .cbi-section-table.zoom-80 { font-size: 0.8rem !important; }
-            .cbi-section-table.zoom-70 { font-size: 0.7rem !important; }
-            .cbi-section-table.zoom-60 { font-size: 0.6rem !important; }
-            .cbi-section-table.zoom-50 { font-size: 0.5rem !important; }            
-
-            /* Adjust padding for zoomed states */
-            .cbi-section-table[class*="zoom-"] td,
-            .cbi-section-table[class*="zoom-"] th {
-                padding: 0.2rem !important;
+            // Compteur — affiche "X / Y total" quand un filtre est actif
+            var countEl = document.getElementById('dscp_conn_count');
+            if (countEl) {
+                countEl.textContent = tokens.length
+                    ? _('Connections: ') + displayed + ' / ' + conns.length + ' total'
+                    : _('Connections: ') + displayed;
             }
 
-            /* Style for the zoom select */
-            .zoom-select {
-                margin-left: 10px;
-                padding: 2px 5px;
-            }
-        `);
+            self._updateSortIndicators();
 
-        // Create zoom select
-        var zoomSelect = E('select', {
-            'class': 'zoom-select',
-            'change': function(ev) {
-                var table = document.getElementById('dscp_connections');
-                // Remove all zoom classes
-                table.classList.remove('zoom-100', 'zoom-90', 'zoom-80', 'zoom-70', 'zoom-60', 'zoom-50');
-                // Add selected zoom class
-                table.classList.add(ev.target.value);
-            }
-        }, [
-            E('option', { 'value': 'zoom-100' }, _('100%')),
-            E('option', { 'value': 'zoom-90' }, _('90%')),
-            E('option', { 'value': 'zoom-80' }, _('80%')),
-            E('option', { 'value': 'zoom-70' }, _('70%')),
-            E('option', { 'value': 'zoom-60' }, _('60%')),
-            E('option', { 'value': 'zoom-50' }, _('50%'))            
-        ]);        
-        
-        
-		return E('div', { 'class': 'cbi-map' }, [
-			style,
-			E('h2', _('DSCP Connections')),
-			E('div', { 'style': 'margin-bottom: 10px;' }, [
-				filterInput,
-				' ',  // Space between filter input and zoom select
-				E('button', {
-					'class': 'cbi-button cbi-button-add',
-					'style': 'margin-left: 10px;',
-					'click': function() {
-						// Met à jour le tri pour afficher d'abord les DSCP différents de CS0
-						view.sortColumn = 'dscp';
-						view.sortDescending = true;
-						var nonCS0Connections = connections.filter(conn => conn.dscp !== 0);
-						var cs0Connections = connections.filter(conn => conn.dscp === 0);
-						var sortedConnections = nonCS0Connections.concat(cs0Connections); // DSCP actifs en haut
-						view.updateTable(sortedConnections);
-					}
-				}, _('Sort by DSCP (Non-CS0 first)')),  // Bouton pour afficher DSCP actifs en haut
-				E('span', { 'style': 'margin-left: 10px;' }, _('Zoom:')),
-				zoomSelect
-			]),
-			E('div', { 'class': 'cbi-section' }, [
-				E('div', { 'class': 'cbi-section-node' }, [
-					table
-				])
-			])
-		]);
-
-    },
-
-    sortTable: function(column, ev) {
-        ev.preventDefault();
-        if (this.sortColumn === column) {
-            this.sortDescending = !this.sortDescending;
-        } else {
-            this.sortColumn = column;
-            this.sortDescending = true;
+        } catch (e) {
+            console.error('renderRows error:', e);
+            self._showError(_('Error displaying connections — system may be overloaded'));
         }
-        var connections = Object.values(this.lastData);
-        this.updateTable(connections);
-        this.updateSortIndicators();
     },
 
-    sortFunction: function(a, b) {
-        var aValue, bValue;
-        
-        switch(this.sortColumn) {
+    // ------------------------------------------------------------------
+    // Comparateur de tri
+    // ------------------------------------------------------------------
+    _sortValue: function(a, b) {
+        var col  = this.sortColumn;
+        var desc = this.sortDescending ? -1 : 1;
+        var av, bv;
+
+        switch (col) {
             case 'bytes':
-                aValue = (a.in_bytes || 0) + (a.out_bytes || 0);
-                bValue = (b.in_bytes || 0) + (b.out_bytes || 0);
+                av = (Number(a.in_bytes)   || 0) + (Number(a.out_bytes)   || 0);
+                bv = (Number(b.in_bytes)   || 0) + (Number(b.out_bytes)   || 0);
                 break;
             case 'packets':
-                aValue = (a.in_packets || 0) + (a.out_packets || 0);
-                bValue = (b.in_packets || 0) + (b.out_packets || 0);
+                av = (Number(a.in_packets) || 0) + (Number(a.out_packets) || 0);
+                bv = (Number(b.in_packets) || 0) + (Number(b.out_packets) || 0);
                 break;
             case 'avgPps':
-                aValue = (a.avgInPps || 0) + (a.avgOutPps || 0);
-                bValue = (b.avgInPps || 0) + (b.avgOutPps || 0);
+                av = a._stats ? a._stats.avgInPps + a._stats.avgOutPps : 0;
+                bv = b._stats ? b._stats.avgInPps + b._stats.avgOutPps : 0;
                 break;
             case 'maxPps':
-                aValue = Math.max(a.maxInPps || 0, a.maxOutPps || 0);
-                bValue = Math.max(b.maxInPps || 0, b.maxOutPps || 0);
+                av = a._stats ? Math.max(a._stats.maxInPps, a._stats.maxOutPps) : 0;
+                bv = b._stats ? Math.max(b._stats.maxInPps, b._stats.maxOutPps) : 0;
                 break;
             case 'avgBps':
-                aValue = (a.avgInBps || 0) + (a.avgOutBps || 0);
-                bValue = (b.avgInBps || 0) + (b.avgOutBps || 0);
+                av = a._stats ? a._stats.avgInBps + a._stats.avgOutBps : 0;
+                bv = b._stats ? b._stats.avgInBps + b._stats.avgOutBps : 0;
                 break;
             default:
-                aValue = a[this.sortColumn];
-                bValue = b[this.sortColumn];
+                av = String(a[col] || '').toLowerCase();
+                bv = String(b[col] || '').toLowerCase();
         }
-        
-        if (typeof aValue === 'string') aValue = aValue.toLowerCase();
-        if (typeof bValue === 'string') bValue = bValue.toLowerCase();
-    
-        if (aValue < bValue) return this.sortDescending ? 1 : -1;
-        if (aValue > bValue) return this.sortDescending ? -1 : 1;
+
+        if (av < bv) return desc;
+        if (av > bv) return -desc;
         return 0;
     },
 
-    createSortIndicator: function(column) {
-        return E('span', { 'class': 'sort-indicator', 'data-column': column }, '');
-    },
-
-    updateSortIndicators: function() {
-        var indicators = document.querySelectorAll('.sort-indicator');
-        indicators.forEach(function(indicator) {
-            if (indicator.dataset.column === this.sortColumn) {
-                indicator.textContent = this.sortDescending ? ' ▼' : ' ▲';
-            } else {
-                indicator.textContent = '';
-            }
-        }.bind(this));
+    // ------------------------------------------------------------------
+    // Indicateurs de tri visuels
+    // ------------------------------------------------------------------
+    _updateSortIndicators: function() {
+        var col  = this.sortColumn;
+        var desc = this.sortDescending;
+        document.querySelectorAll('.sort-indicator').forEach(function(el) {
+            el.textContent = (el.dataset.col === col) ? (desc ? ' ▼' : ' ▲') : '';
+        });
     },
 
     handleSaveApply: null,
-    handleSave: null,
-    handleReset: null
+    handleSave:      null,
+    handleReset:     null
 });
