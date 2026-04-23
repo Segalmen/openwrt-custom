@@ -79,6 +79,56 @@ return view.extend({
         s.tab('tab_dscp',      _('DSCP Policies'));
 
         // ==================================================================
+        // Helper: validate port lists (comma-separated ports and ranges)
+        // ==================================================================
+        // Accepted: "443", "80,443", "3000-4000", "80,443,3000-4000"
+        // Rejected: spaces, non-digit chars, ports out of range, inverted ranges
+        var validatePortList = function(section_id, value) {
+            // Empty allowed (all port fields use rmempty:true)
+            if (value == null || value === '')
+                return true;
+
+            // No whitespace anywhere
+            if (/\s/.test(value))
+                return _('Spaces are not allowed. Use commas without spaces (e.g. "80,443,3000-4000").');
+
+            // Only digits, commas and dashes
+            if (!/^[0-9,\-]+$/.test(value))
+                return _('Only digits, commas and dashes are allowed (e.g. "80,443,3000-4000").');
+
+            // Per-element validation: each must be a valid port or range
+            var parts = value.split(',');
+            for (var i = 0; i < parts.length; i++) {
+                var p = parts[i];
+                if (p === '')
+                    return _('Empty element in the list (double comma or trailing comma?).');
+
+                if (p.indexOf('-') !== -1) {
+                    // Range "start-end"
+                    var range = p.split('-');
+                    if (range.length !== 2 || range[0] === '' || range[1] === '')
+                        return _('Invalid range: "%s". Use "start-end" (e.g. "3000-4000").').format(p);
+
+                    var start = parseInt(range[0], 10);
+                    var end   = parseInt(range[1], 10);
+
+                    if (isNaN(start) || isNaN(end))
+                        return _('Invalid range: "%s".').format(p);
+                    if (start < 1 || start > 65535 || end < 1 || end > 65535)
+                        return _('Port out of range (1-65535) in "%s".').format(p);
+                    if (start >= end)
+                        return _('Range "%s": start must be less than end.').format(p);
+                } else {
+                    // Single port
+                    var port = parseInt(p, 10);
+                    if (isNaN(port) || port < 1 || port > 65535)
+                        return _('Invalid port "%s" (must be 1-65535).').format(p);
+                }
+            }
+            return true;
+        };
+
+        // ==================================================================
         // Tab: DSCP Policies
         // ==================================================================
 
@@ -138,6 +188,7 @@ return view.extend({
         o.placeholder = '3659,3074,3478-3480,10000-45000';
         o.rmempty     = true;
         o.depends('priority_udp_enable', '1');
+        o.validate    = validatePortList;
         o.description = _('Comma-separated ports or ranges used by latency-sensitive UDP applications.');
 
         // ==== TCP ====
@@ -164,6 +215,7 @@ return view.extend({
         o.placeholder = '3074,3659';
         o.rmempty     = true;
         o.depends('priority_tcp_enable', '1');
+        o.validate    = validatePortList;
         o.description = _('Comma-separated TCP ports used by latency-sensitive applications.');
 
         // ==== Micro-packet priority ====
@@ -189,7 +241,7 @@ return view.extend({
         // ==== Browsing ====
         o = s.taboption('tab_dscp', form.Flag, 'browsing_enable',
             _('Enable web browsing classification'));
-        o.default     = o.disabled;
+        o.default     = '0';
         o.rmempty     = false;
         o.description = _('Apply a specific DSCP to web traffic (HTTP/HTTPS/QUIC). ' +
                           'Can be used to deprioritize bulk web traffic relative to real-time flows.');
@@ -199,6 +251,7 @@ return view.extend({
         o.placeholder = '80,8080,443,853';
         o.rmempty     = true;
         o.depends('browsing_enable', '1');
+        o.validate    = validatePortList;
         o.description = _('TCP ports for web traffic (HTTP, HTTPS, DoT...).');
 
         o = s.taboption('tab_dscp', form.Value, 'browsing_udp_ports',
@@ -206,6 +259,7 @@ return view.extend({
         o.placeholder = '443';
         o.rmempty     = true;
         o.depends('browsing_enable', '1');
+        o.validate    = validatePortList;
         o.description = _('UDP ports for web traffic (QUIC/HTTP3).');
 
         o = s.taboption('tab_dscp', form.ListValue, 'browsing_dscp',
@@ -222,7 +276,7 @@ return view.extend({
         // ==== Bulk ====
         o = s.taboption('tab_dscp', form.Flag, 'gaming_bulk_enable',
             _('Enable bulk traffic classification'));
-        o.default     = o.disabled;
+        o.default     = '0';
         o.rmempty     = false;
         o.description = _('Mark large downloads (HTTP/HTTPS) from priority devices with a ' +
                           'lower DSCP value so they do not compete with real-time traffic.');
