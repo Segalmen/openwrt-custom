@@ -48,6 +48,19 @@ make_nft_set() {
 }
 
 # Convert DSCP name to conntrack mark value (with 0x80 valid flag)
+#
+# NOTE: This helper is currently UNUSED. The script stores DSCP→ctmark
+#       directly in nftables via `ct mark set ip dscp | 0x80` in both
+#       ctinfo ON and ctinfo OFF modes (see setup_nftables()).
+#
+# Kept as a reference/fallback utility for:
+#   - Future extensions that might need to set fixed ctmarks from shell
+#     (e.g. per-rule pre-computed ctmark instead of runtime bitwise OR)
+#   - Portability on older kernels/nftables where bitwise OR on ip dscp
+#     might behave differently (though this works fine on kernel 3.14+
+#     which covers all currently supported OpenWrt releases)
+#
+# Usage: ctmark=$(dscp_to_ctmark "cs4")  # returns "0xa0"
 dscp_to_ctmark() {
     case "$(printf '%s' "$1" | tr 'A-Z' 'a-z')" in
         cs0)  echo "0x80" ;;
@@ -220,12 +233,22 @@ ingress() {
 #
 # ctinfo ON  → called with "postrouting"
 # ctinfo OFF → called with "prerouting"
+#
+# Order matters: each rule can overwrite previous DSCP marks unless a
+# guard "dscp !=" is present. Ordering chosen to minimize false positives
+# on the MicroPkt rule:
+#
+#   1. Priority UDP  → explicit high-priority traffic
+#   2. Priority TCP  → explicit high-priority traffic
+#   3. Bulk (TCP/UDP + BigHTTPS) → background web/download traffic → CS1
+#   4. MicroPkt / SmallPkt → only matches what's left (guarded by dscp != cs1)
+#   5. Browsing → only marks pure CS0 traffic (other devices on LAN)
 # =============================================================================
 _build_dscp_rules() {
     local _chain="$1"
 
     # ------------------------------------------------------------------
-    # Priority UDP
+    # 1. Priority UDP
     # ------------------------------------------------------------------
     if [ "$PRIORITY_UDP_ENABLE" = "1" ] && [ -n "$PRIORITY_UDP_PORTS" ]; then
 
@@ -255,7 +278,7 @@ _build_dscp_rules() {
     fi
 
     # ------------------------------------------------------------------
-    # Priority TCP
+    # 2. Priority TCP
     # ------------------------------------------------------------------
     if [ "$PRIORITY_TCP_ENABLE" = "1" ] && [ -n "$PRIORITY_TCP_PORTS" ]; then
 
@@ -285,89 +308,7 @@ _build_dscp_rules() {
     fi
 
     # ------------------------------------------------------------------
-    # Micro-packet priority (configurable via LuCI)
-    # < 150 bytes  → MICRO_PKT_DSCP (default CS6)
-    # 150-300 bytes → PRIORITY_UDP_DSCP
-    # Only if not already marked with a priority DSCP
-    # ------------------------------------------------------------------
-    if [ "$MICRO_PKT_ENABLE" = "1" ] && \
-       { [ "$PRIORITY_UDP_ENABLE" = "1" ] || [ "$PRIORITY_TCP_ENABLE" = "1" ]; }; then
-
-        # IPv4 upload micro
-        nft add rule inet sqm_dscp "$_chain" \
-            ip saddr "$PRIORITY_IP_SET" \
-            ip dscp != "$PRIORITY_UDP_DSCP" \
-            ip dscp != "$PRIORITY_TCP_DSCP" \
-            meta length lt 150 \
-            counter ip dscp set "$MICRO_PKT_DSCP" \
-            comment "MicroPktup4"
-
-        # IPv4 download micro
-        nft add rule inet sqm_dscp "$_chain" \
-            ip daddr "$PRIORITY_IP_SET" \
-            ip dscp != "$PRIORITY_UDP_DSCP" \
-            ip dscp != "$PRIORITY_TCP_DSCP" \
-            meta length lt 150 \
-            counter ip dscp set "$MICRO_PKT_DSCP" \
-            comment "MicroPktdwn4"
-
-        # IPv4 upload small
-        nft add rule inet sqm_dscp "$_chain" \
-            ip saddr "$PRIORITY_IP_SET" \
-            ip dscp != "$PRIORITY_UDP_DSCP" \
-            ip dscp != "$PRIORITY_TCP_DSCP" \
-            meta length ge 150 meta length lt 300 \
-            counter ip dscp set "$PRIORITY_UDP_DSCP" \
-            comment "SmallPktup4"
-
-        # IPv4 download small
-        nft add rule inet sqm_dscp "$_chain" \
-            ip daddr "$PRIORITY_IP_SET" \
-            ip dscp != "$PRIORITY_UDP_DSCP" \
-            ip dscp != "$PRIORITY_TCP_DSCP" \
-            meta length ge 150 meta length lt 300 \
-            counter ip dscp set "$PRIORITY_UDP_DSCP" \
-            comment "SmallPktdwn4"
-
-        # IPv6 upload micro
-        nft add rule inet sqm_dscp "$_chain" \
-            ip6 saddr "$PRIORITY_IP6_SET" \
-            ip6 dscp != "$PRIORITY_UDP_DSCP" \
-            ip6 dscp != "$PRIORITY_TCP_DSCP" \
-            meta length lt 150 \
-            counter ip6 dscp set "$MICRO_PKT_DSCP" \
-            comment "MicroPktup6"
-
-        # IPv6 download micro
-        nft add rule inet sqm_dscp "$_chain" \
-            ip6 daddr "$PRIORITY_IP6_SET" \
-            ip6 dscp != "$PRIORITY_UDP_DSCP" \
-            ip6 dscp != "$PRIORITY_TCP_DSCP" \
-            meta length lt 150 \
-            counter ip6 dscp set "$MICRO_PKT_DSCP" \
-            comment "MicroPktdwn6"
-
-        # IPv6 upload small
-        nft add rule inet sqm_dscp "$_chain" \
-            ip6 saddr "$PRIORITY_IP6_SET" \
-            ip6 dscp != "$PRIORITY_UDP_DSCP" \
-            ip6 dscp != "$PRIORITY_TCP_DSCP" \
-            meta length ge 150 meta length lt 300 \
-            counter ip6 dscp set "$PRIORITY_UDP_DSCP" \
-            comment "SmallPktup6"
-
-        # IPv6 download small
-        nft add rule inet sqm_dscp "$_chain" \
-            ip6 daddr "$PRIORITY_IP6_SET" \
-            ip6 dscp != "$PRIORITY_UDP_DSCP" \
-            ip6 dscp != "$PRIORITY_TCP_DSCP" \
-            meta length ge 150 meta length lt 300 \
-            counter ip6 dscp set "$PRIORITY_UDP_DSCP" \
-            comment "SmallPktdwn6"
-    fi
-
-    # ------------------------------------------------------------------
-    # Bulk traffic classification
+    # 3. Bulk traffic classification (MUST come before MicroPkt)
     # ------------------------------------------------------------------
     if [ "$BULK_ENABLE" = "1" ]; then
 
@@ -380,7 +321,7 @@ _build_dscp_rules() {
 
             nft add rule inet sqm_dscp "$_chain" \
                 ip daddr "$PRIORITY_IP_SET" \
-                tcp dport { "$BROWSING_TCP_PORTS" } \
+                tcp sport { "$BROWSING_TCP_PORTS" } \
                 counter ip dscp set "$BULK_DSCP" \
                 comment "BulkTCPdwn4"
 
@@ -392,7 +333,7 @@ _build_dscp_rules() {
 
             nft add rule inet sqm_dscp "$_chain" \
                 ip6 daddr "$PRIORITY_IP6_SET" \
-                tcp dport { "$BROWSING_TCP_PORTS" } \
+                tcp sport { "$BROWSING_TCP_PORTS" } \
                 counter ip6 dscp set "$BULK_DSCP" \
                 comment "BulkTCPdwn6"
         fi
@@ -406,7 +347,7 @@ _build_dscp_rules() {
 
             nft add rule inet sqm_dscp "$_chain" \
                 ip daddr "$PRIORITY_IP_SET" \
-                udp dport { "$BROWSING_UDP_PORTS" } \
+                udp sport { "$BROWSING_UDP_PORTS" } \
                 counter ip dscp set "$BULK_DSCP" \
                 comment "BulkUDPdwn4"
 
@@ -418,7 +359,7 @@ _build_dscp_rules() {
 
             nft add rule inet sqm_dscp "$_chain" \
                 ip6 daddr "$PRIORITY_IP6_SET" \
-                udp dport { "$BROWSING_UDP_PORTS" } \
+                udp sport { "$BROWSING_UDP_PORTS" } \
                 counter ip6 dscp set "$BULK_DSCP" \
                 comment "BulkUDPdwn6"
         fi
@@ -456,7 +397,203 @@ _build_dscp_rules() {
     fi
 
     # ------------------------------------------------------------------
-    # Browsing classification
+    # 4. Micro-packet priority (MUST come after Bulk)
+    # < 150 bytes  → MICRO_PKT_DSCP (default CS6)
+    # 150-300 bytes → PRIORITY_UDP_DSCP
+    # Only matches traffic on the priority UDP/TCP ports — avoids boosting
+    # unrelated small packets (DNS, keepalives, broadcasts, etc.)
+    # ------------------------------------------------------------------
+
+    # --- UDP variant: only if priority UDP is enabled ---
+    if [ "$MICRO_PKT_ENABLE" = "1" ] && \
+       [ "$PRIORITY_UDP_ENABLE" = "1" ] && \
+       [ -n "$PRIORITY_UDP_PORTS" ]; then
+
+        # IPv4 UDP upload micro
+        nft add rule inet sqm_dscp "$_chain" \
+            ip saddr "$PRIORITY_IP_SET" \
+            udp sport { "$PRIORITY_UDP_PORTS" } \
+            ip dscp != "$PRIORITY_UDP_DSCP" \
+            ip dscp != "$PRIORITY_TCP_DSCP" \
+            ip dscp != cs1 \
+            meta length lt 150 \
+            counter ip dscp set "$MICRO_PKT_DSCP" \
+            comment "MicroPktUDPup4"
+
+        # IPv4 UDP download micro
+        nft add rule inet sqm_dscp "$_chain" \
+            ip daddr "$PRIORITY_IP_SET" \
+            udp dport { "$PRIORITY_UDP_PORTS" } \
+            ip dscp != "$PRIORITY_UDP_DSCP" \
+            ip dscp != "$PRIORITY_TCP_DSCP" \
+            ip dscp != cs1 \
+            meta length lt 150 \
+            counter ip dscp set "$MICRO_PKT_DSCP" \
+            comment "MicroPktUDPdwn4"
+
+        # IPv4 UDP upload small
+        nft add rule inet sqm_dscp "$_chain" \
+            ip saddr "$PRIORITY_IP_SET" \
+            udp sport { "$PRIORITY_UDP_PORTS" } \
+            ip dscp != "$PRIORITY_UDP_DSCP" \
+            ip dscp != "$PRIORITY_TCP_DSCP" \
+            ip dscp != cs1 \
+            meta length ge 150 meta length lt 300 \
+            counter ip dscp set "$PRIORITY_UDP_DSCP" \
+            comment "SmallPktUDPup4"
+
+        # IPv4 UDP download small
+        nft add rule inet sqm_dscp "$_chain" \
+            ip daddr "$PRIORITY_IP_SET" \
+            udp dport { "$PRIORITY_UDP_PORTS" } \
+            ip dscp != "$PRIORITY_UDP_DSCP" \
+            ip dscp != "$PRIORITY_TCP_DSCP" \
+            ip dscp != cs1 \
+            meta length ge 150 meta length lt 300 \
+            counter ip dscp set "$PRIORITY_UDP_DSCP" \
+            comment "SmallPktUDPdwn4"
+
+        # IPv6 UDP upload micro
+        nft add rule inet sqm_dscp "$_chain" \
+            ip6 saddr "$PRIORITY_IP6_SET" \
+            udp sport { "$PRIORITY_UDP_PORTS" } \
+            ip6 dscp != "$PRIORITY_UDP_DSCP" \
+            ip6 dscp != "$PRIORITY_TCP_DSCP" \
+            ip6 dscp != cs1 \
+            meta length lt 150 \
+            counter ip6 dscp set "$MICRO_PKT_DSCP" \
+            comment "MicroPktUDPup6"
+
+        # IPv6 UDP download micro
+        nft add rule inet sqm_dscp "$_chain" \
+            ip6 daddr "$PRIORITY_IP6_SET" \
+            udp dport { "$PRIORITY_UDP_PORTS" } \
+            ip6 dscp != "$PRIORITY_UDP_DSCP" \
+            ip6 dscp != "$PRIORITY_TCP_DSCP" \
+            ip6 dscp != cs1 \
+            meta length lt 150 \
+            counter ip6 dscp set "$MICRO_PKT_DSCP" \
+            comment "MicroPktUDPdwn6"
+
+        # IPv6 UDP upload small
+        nft add rule inet sqm_dscp "$_chain" \
+            ip6 saddr "$PRIORITY_IP6_SET" \
+            udp sport { "$PRIORITY_UDP_PORTS" } \
+            ip6 dscp != "$PRIORITY_UDP_DSCP" \
+            ip6 dscp != "$PRIORITY_TCP_DSCP" \
+            ip6 dscp != cs1 \
+            meta length ge 150 meta length lt 300 \
+            counter ip6 dscp set "$PRIORITY_UDP_DSCP" \
+            comment "SmallPktUDPup6"
+
+        # IPv6 UDP download small
+        nft add rule inet sqm_dscp "$_chain" \
+            ip6 daddr "$PRIORITY_IP6_SET" \
+            udp dport { "$PRIORITY_UDP_PORTS" } \
+            ip6 dscp != "$PRIORITY_UDP_DSCP" \
+            ip6 dscp != "$PRIORITY_TCP_DSCP" \
+            ip6 dscp != cs1 \
+            meta length ge 150 meta length lt 300 \
+            counter ip6 dscp set "$PRIORITY_UDP_DSCP" \
+            comment "SmallPktUDPdwn6"
+    fi
+
+    # --- TCP variant: only if priority TCP is enabled ---
+    if [ "$MICRO_PKT_ENABLE" = "1" ] && \
+       [ "$PRIORITY_TCP_ENABLE" = "1" ] && \
+       [ -n "$PRIORITY_TCP_PORTS" ]; then
+
+        # IPv4 TCP upload micro
+        nft add rule inet sqm_dscp "$_chain" \
+            ip saddr "$PRIORITY_IP_SET" \
+            tcp sport { "$PRIORITY_TCP_PORTS" } \
+            ip dscp != "$PRIORITY_UDP_DSCP" \
+            ip dscp != "$PRIORITY_TCP_DSCP" \
+            ip dscp != cs1 \
+            meta length lt 150 \
+            counter ip dscp set "$MICRO_PKT_DSCP" \
+            comment "MicroPktTCPup4"
+
+        # IPv4 TCP download micro
+        nft add rule inet sqm_dscp "$_chain" \
+            ip daddr "$PRIORITY_IP_SET" \
+            tcp dport { "$PRIORITY_TCP_PORTS" } \
+            ip dscp != "$PRIORITY_UDP_DSCP" \
+            ip dscp != "$PRIORITY_TCP_DSCP" \
+            ip dscp != cs1 \
+            meta length lt 150 \
+            counter ip dscp set "$MICRO_PKT_DSCP" \
+            comment "MicroPktTCPdwn4"
+
+        # IPv4 TCP upload small
+        nft add rule inet sqm_dscp "$_chain" \
+            ip saddr "$PRIORITY_IP_SET" \
+            tcp sport { "$PRIORITY_TCP_PORTS" } \
+            ip dscp != "$PRIORITY_UDP_DSCP" \
+            ip dscp != "$PRIORITY_TCP_DSCP" \
+            ip dscp != cs1 \
+            meta length ge 150 meta length lt 300 \
+            counter ip dscp set "$PRIORITY_UDP_DSCP" \
+            comment "SmallPktTCPup4"
+
+        # IPv4 TCP download small
+        nft add rule inet sqm_dscp "$_chain" \
+            ip daddr "$PRIORITY_IP_SET" \
+            tcp dport { "$PRIORITY_TCP_PORTS" } \
+            ip dscp != "$PRIORITY_UDP_DSCP" \
+            ip dscp != "$PRIORITY_TCP_DSCP" \
+            ip dscp != cs1 \
+            meta length ge 150 meta length lt 300 \
+            counter ip dscp set "$PRIORITY_UDP_DSCP" \
+            comment "SmallPktTCPdwn4"
+
+        # IPv6 TCP upload micro
+        nft add rule inet sqm_dscp "$_chain" \
+            ip6 saddr "$PRIORITY_IP6_SET" \
+            tcp sport { "$PRIORITY_TCP_PORTS" } \
+            ip6 dscp != "$PRIORITY_UDP_DSCP" \
+            ip6 dscp != "$PRIORITY_TCP_DSCP" \
+            ip6 dscp != cs1 \
+            meta length lt 150 \
+            counter ip6 dscp set "$MICRO_PKT_DSCP" \
+            comment "MicroPktTCPup6"
+
+        # IPv6 TCP download micro
+        nft add rule inet sqm_dscp "$_chain" \
+            ip6 daddr "$PRIORITY_IP6_SET" \
+            tcp dport { "$PRIORITY_TCP_PORTS" } \
+            ip6 dscp != "$PRIORITY_UDP_DSCP" \
+            ip6 dscp != "$PRIORITY_TCP_DSCP" \
+            ip6 dscp != cs1 \
+            meta length lt 150 \
+            counter ip6 dscp set "$MICRO_PKT_DSCP" \
+            comment "MicroPktTCPdwn6"
+
+        # IPv6 TCP upload small
+        nft add rule inet sqm_dscp "$_chain" \
+            ip6 saddr "$PRIORITY_IP6_SET" \
+            tcp sport { "$PRIORITY_TCP_PORTS" } \
+            ip6 dscp != "$PRIORITY_UDP_DSCP" \
+            ip6 dscp != "$PRIORITY_TCP_DSCP" \
+            ip6 dscp != cs1 \
+            meta length ge 150 meta length lt 300 \
+            counter ip6 dscp set "$PRIORITY_UDP_DSCP" \
+            comment "SmallPktTCPup6"
+
+        # IPv6 TCP download small
+        nft add rule inet sqm_dscp "$_chain" \
+            ip6 daddr "$PRIORITY_IP6_SET" \
+            tcp dport { "$PRIORITY_TCP_PORTS" } \
+            ip6 dscp != "$PRIORITY_UDP_DSCP" \
+            ip6 dscp != "$PRIORITY_TCP_DSCP" \
+            ip6 dscp != cs1 \
+            meta length ge 150 meta length lt 300 \
+            counter ip6 dscp set "$PRIORITY_UDP_DSCP" \
+            comment "SmallPktTCPdwn6"
+    fi
+
+    # ------------------------------------------------------------------
+    # 5. Browsing classification
     # Only marks CS0 traffic — does not overwrite existing DSCP marks
     # ------------------------------------------------------------------
     if [ "$BROWSING_ENABLE" = "1" ]; then
