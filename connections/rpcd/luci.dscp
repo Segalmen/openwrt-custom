@@ -122,6 +122,39 @@ local function get_connections()
 end
 
 -- =============================================================================
+-- Flush conntrack entries for a given IP (IPv4 or IPv6)
+-- Returns count of flushed entries by parsing conntrack output
+-- =============================================================================
+local function flush_ip(ip, family_flag)
+    if not ip or ip == "" then
+        return 0
+    end
+
+    local total = 0
+
+    -- Flush both directions: source and destination
+    for _, direction in ipairs({ "-s", "-d" }) do
+        -- Redirect stderr to stdout to capture the "X flow entries deleted" message
+        local cmd = string.format("conntrack -D %s %s %s 2>&1",
+            direction, ip, family_flag or "")
+
+        local handle = io.popen(cmd)
+        if handle then
+            local output = handle:read("*a") or ""
+            handle:close()
+
+            -- Parse: "conntrack v1.4.8 (conntrack-tools): N flow entries have been deleted."
+            local count = output:match("(%d+)%s+flow%s+entries%s+have%s+been%s+deleted")
+            if count then
+                total = total + tonumber(count)
+            end
+        end
+    end
+
+    return total
+end
+
+-- =============================================================================
 -- RPC method definitions
 -- =============================================================================
 local methods = {
@@ -134,6 +167,53 @@ local methods = {
                 return { result = jsonc.stringify({ connections = {} }) }
             end
             return { result = jsonc.stringify({ connections = connections }) }
+        end
+    },
+
+    flushConntrack = {
+        args = { ip4 = "", ip6 = "" },
+        call = function(args)
+            args = args or {}
+            local ip4 = args.ip4 or ""
+            local ip6 = args.ip6 or ""
+
+            -- Basic safety: only accept IPv4/IPv6-looking patterns
+            -- Reject anything with shell metacharacters to prevent injection
+            local function safe_ip(s)
+                if type(s) ~= "string" then return "" end
+                -- Allow digits, dots, colons, slash (for CIDR), letters a-f (IPv6 hex)
+                if s:match("^[%da-fA-F%.%:%/]+$") then
+                    return s
+                end
+                return ""
+            end
+
+            ip4 = safe_ip(ip4)
+            ip6 = safe_ip(ip6)
+
+            local ipv4_count = 0
+            local ipv6_count = 0
+
+            if ip4 ~= "" then
+                ipv4_count = flush_ip(ip4, "-f ipv4")
+            end
+
+            if ip6 ~= "" then
+                ipv6_count = flush_ip(ip6, "-f ipv6")
+            end
+
+            local total = ipv4_count + ipv6_count
+
+            return {
+                result = jsonc.stringify({
+                    success    = true,
+                    ipv4       = ip4,
+                    ipv6       = ip6,
+                    ipv4_count = ipv4_count,
+                    ipv6_count = ipv6_count,
+                    total      = total
+                })
+            }
         end
     }
 }

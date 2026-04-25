@@ -5,6 +5,11 @@
             "ubus": {
                 "luci.dscp": [ "getConntrackDSCP" ]
             }
+        },
+        "write": {
+            "ubus": {
+                "luci.dscp": [ "flushConntrack" ]
+            }
         }
     }
 }
