@@ -77,6 +77,7 @@ return view.extend({
         s.tab('tab_qdisc',     _('Queue Discipline'));
         s.tab('tab_linklayer', _('Link Layer Adaptation'));
         s.tab('tab_dscp',      _('DSCP Policies'));
+		
 
         // ==================================================================
         // Helper: validate port lists (comma-separated ports and ranges)
@@ -300,6 +301,8 @@ return view.extend({
         o.description = _('Automatically downgrade large HTTPS packets (&gt;1000 bytes) from ' +
                           'priority devices to the Bulk DSCP value. ' +
                           'Prevents big downloads from stealing bandwidth from real-time traffic.');
+						  
+
 
         // ==================================================================
         // Tab: Basic Settings

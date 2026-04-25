@@ -3,13 +3,21 @@
 'require poll';
 'require rpc';
 'require ui';
+'require uci';
 
 // =============================================================================
-// RPC call declaration
+// RPC call declarations
 // =============================================================================
 var callGetConntrackDSCP = rpc.declare({
     object: 'luci.dscp',
     method: 'getConntrackDSCP',
+    expect: {}
+});
+
+var callFlushConntrack = rpc.declare({
+    object: 'luci.dscp',
+    method: 'flushConntrack',
+    params: [ 'ip4', 'ip6' ],
     expect: {}
 });
 
@@ -201,17 +209,25 @@ return view.extend({
     // ------------------------------------------------------------------
     // load() — données initiales
     // ------------------------------------------------------------------
-    load: function() {
-        return callGetConntrackDSCP();
+load: function() {
+        return Promise.all([
+            callGetConntrackDSCP(),
+            uci.load('sqm')
+        ]);
     },
 
     // ------------------------------------------------------------------
     // render() — construction du DOM
     // ------------------------------------------------------------------
-    render: function(data) {
+render: function(data) {
         var self = this;
-        var initialConns = (data && data.connections)
-            ? Object.values(data.connections)
+        // data is now [connectionsResult, uciLoaded]
+        var connectionsData = (data && data[0]) ? data[0] : {};
+        var priorityIp4 = uci.get('sqm', '@queue[0]', 'gaming_ip')  || '';
+        var priorityIp6 = uci.get('sqm', '@queue[0]', 'gaming_ip6') || '';
+
+        var initialConns = (connectionsData && connectionsData.connections)
+            ? Object.values(connectionsData.connections)
             : [];
 
         // --- Filtre ---
@@ -345,6 +361,44 @@ return view.extend({
             '  .cbi-section-table th:nth-child(6){ display:none; }}'
         ].join('\n'));
 
+
+        // --- Flush Conntrack handler ---
+        var handleFlush = function() {
+            if (!priorityIp4 && !priorityIp6) {
+                ui.addNotification(null, E("p", _("No priority IP configured. Set gaming_ip in SQM first.")), "warning");
+                return;
+            }
+
+            var msg = _("Flush all conntrack entries for:") + "\n";
+            if (priorityIp4) msg += "  IPv4: " + priorityIp4 + "\n";
+            if (priorityIp6) msg += "  IPv6: " + priorityIp6 + "\n";
+            msg += "\n" + _("Active connections will be reset. Continue?");
+
+            if (!confirm(msg)) return;
+
+            callFlushConntrack(priorityIp4, priorityIp6)
+                .then(function(res) {
+                    var r = res || {};
+                    var total = r.total || 0;
+                    var v4    = r.ipv4_count || 0;
+                    var v6    = r.ipv6_count || 0;
+                    ui.addNotification(null, E("p",
+                        _("Conntrack result: %d flow entries deleted (%d IPv4, %d IPv6)").format(total, v4, v6)
+                    ), "success");
+                })
+                .catch(function(err) {
+                    ui.addNotification(null, E("p",
+                        _("Flush error: %s").format((err && err.message) || "unknown")
+                    ), "danger");
+                });
+        };
+
+        var flushBtn = E("button", {
+            class: "btn cbi-button cbi-button-negative",
+            style: "margin-right:8px;",
+            click: handleFlush
+        }, _("Flush Conntrack"));
+
         // Rendu initial + démarrage polling adaptatif
         self.renderRows(initialConns);
         adaptivePoll(self);
@@ -355,6 +409,7 @@ return view.extend({
             E('div', {
                 style: 'margin-bottom:10px; display:flex; flex-wrap:wrap; gap:6px; align-items:center;'
             }, [
+                flushBtn,
                 filterInput,
                 dscpBtn,
                 pauseBtn,
@@ -530,7 +585,7 @@ return view.extend({
     // ------------------------------------------------------------------
     _sortValue: function(a, b) {
         var col  = this.sortColumn;
-        var desc = this.sortDescending ? -1 : 1;
+        var desc = this.sortDescending ? 1 : -1;
         var av, bv;
 
         switch (col) {
@@ -553,6 +608,10 @@ return view.extend({
             case 'avgBps':
                 av = a._stats ? a._stats.avgInBps + a._stats.avgOutBps : 0;
                 bv = b._stats ? b._stats.avgInBps + b._stats.avgOutBps : 0;
+                break;
+            case 'dscp':
+                av = Number(a.dscp) || 0;
+                bv = Number(b.dscp) || 0;
                 break;
             default:
                 av = String(a[col] || '').toLowerCase();
