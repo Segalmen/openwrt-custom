@@ -124,6 +124,12 @@ if [ "$MISSING" = "1" ]; then
     exit 1
 fi
 
+# Optional file (warn but do not fail)
+if [ ! -f "tools/dscp-validate.sh" ]; then
+    warn "Optional file missing: tools/dscp-validate.sh"
+    warn "→ Diagnostic tool will not be installed."
+fi
+
 # =============================================================================
 # Detect package manager
 # =============================================================================
@@ -159,6 +165,7 @@ $PKG_TC
 ip-full
 lua
 luci-lib-jsonc
+conntrack-tools
 "
 
 info "Updating package index"
@@ -287,6 +294,18 @@ fi
 ok "LuCI SQM view installed"
 
 # =============================================================================
+# Install: diagnostic tool (optional)
+# =============================================================================
+if [ -f "tools/dscp-validate.sh" ]; then
+    info "Installing diagnostic tool"
+    do_run cp tools/dscp-validate.sh /root/dscp-validate.sh
+    do_run chmod +x /root/dscp-validate.sh
+    ok "Diagnostic tool installed → /root/dscp-validate.sh"
+else
+    warn "Skipping diagnostic tool (tools/dscp-validate.sh not present)"
+fi
+
+# =============================================================================
 # Auto-detect WAN interface
 # =============================================================================
 detect_wan() {
@@ -383,7 +402,12 @@ printf "     → Verify the WAN interface\n"
 printf "     → Configure download / upload bandwidth\n"
 printf "     → Configure Link layer / overhead\n"
 printf "  2. LuCI → Network → DSCP → Connections\n"
-printf "     → Real-time connection view (read-only)\n"
+printf "     → Real-time connection view (with Flush Conntrack button)\n"
+if [ -f /root/dscp-validate.sh ] || [ -f tools/dscp-validate.sh ]; then
+    printf "  3. Validate the install:\n"
+    printf "     /root/dscp-validate.sh\n"
+    printf "     (use --anonymize when sharing the report publicly)\n"
+fi
 printf "\n"
 printf "  To uninstall: sh uninstall.sh\n"
 printf "\n"

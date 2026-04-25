@@ -90,7 +90,7 @@ fi
 # CRITICAL: nftables sqm_dscp rules must be removed by SQM
 # before removing files, otherwise they remain active.
 # =============================================================================
-info "Step 1/6: Stopping SQM (removing nftables rules)"
+info "Step 1/7: Stopping SQM (removing nftables rules)"
 
 if [ "$DRY_RUN" = "0" ]; then
     if [ -x /etc/init.d/sqm ]; then
@@ -121,7 +121,7 @@ fi
 # =============================================================================
 # Step 2: Restore original sqm.js (LuCI SQM view)
 # =============================================================================
-info "Step 2/6: Restoring LuCI SQM view"
+info "Step 2/7: Restoring LuCI SQM view"
 
 LUCI_SQM="/www/luci-static/resources/view/network/sqm.js"
 LUCI_SQM_ORIG="${LUCI_SQM}.orig"
@@ -144,14 +144,14 @@ fi
 # =============================================================================
 # Step 3: Remove SQM script .qos
 # =============================================================================
-info "Step 3/6: Removing SQM script Seg_Layer_Cake.qos"
+info "Step 3/7: Removing SQM script Seg_Layer_Cake.qos"
 
 safe_rm /usr/lib/sqm/Seg_Layer_Cake.qos
 
 # =============================================================================
 # Step 4: Restore or remove SQM configuration
 # =============================================================================
-info "Step 4/6: Restoring SQM configuration"
+info "Step 4/7: Restoring SQM configuration"
 
 if [ "$KEEP_CONFIG" = "0" ]; then
     if [ "$DRY_RUN" = "0" ]; then
@@ -173,7 +173,7 @@ fi
 # =============================================================================
 # Step 5: Remove DSCP Connections view
 # =============================================================================
-info "Step 5/6: Removing DSCP Connections view"
+info "Step 5/7: Removing DSCP Connections view"
 
 safe_rm /www/luci-static/resources/view/dscp/connections.js
 safe_rm /usr/libexec/rpcd/luci.dscp
@@ -190,9 +190,16 @@ else
 fi
 
 # =============================================================================
-# Step 6: Restart LuCI services
+# Step 6: Remove diagnostic tool
 # =============================================================================
-info "Step 6/6: Restarting services"
+info "Step 6/7: Removing diagnostic tool"
+
+safe_rm /root/dscp-validate.sh
+
+# =============================================================================
+# Step 7: Restart LuCI services
+# =============================================================================
+info "Step 7/7: Restarting services"
 
 if [ "$DRY_RUN" = "0" ]; then
     [ -x /etc/init.d/rpcd ]   && /etc/init.d/rpcd restart   && ok "rpcd restarted"
@@ -216,8 +223,9 @@ printf "   - /www/luci-static/resources/view/dscp/connections.js\n"
 printf "   - /usr/libexec/rpcd/luci.dscp\n"
 printf "   - /usr/share/luci/menu.d/luci-app-dscp.json\n"
 printf "   - /usr/share/rpcd/acl.d/luci-app-dscp.json\n"
+printf "   - /root/dscp-validate.sh (diagnostic tool)\n"
 printf "\n"
-printf "  Installed packages (CAKE, nftables, etc.) are kept.\n"
+printf "  Installed packages (CAKE, nftables, conntrack-tools, etc.) are kept.\n"
 printf "  Use opkg/apk remove if you wish to remove them.\n"
 printf "\n"
 printf "  System restored to a clean OpenWrt state.\n"
