@@ -43,11 +43,17 @@ Mark TCP traffic from/to priority devices (optional).
 Useful for remote desktop, video conferencing signalling, etc.
 
 ### Micro-Packet Priority
-Automatically boost very small packets (< 150 bytes) from priority devices
-to the highest CAKE tin. Ideal for gaming ACKs, VoIP signalling, and
-real-time control packets.
-Packets between 150–300 bytes receive the Priority UDP DSCP value.
-The micro-packet DSCP value is configurable (CS6, CS7, or EF).
+Automatically boost very small packets (default: < 60 bytes) from priority
+devices to the highest CAKE tin. Ideal for gaming ACKs, VoIP signalling,
+TCP keepalives, STUN/ICE probes, and real-time control packets.
+Packets between the micro and small thresholds (default: 60–200 bytes)
+receive the Priority UDP DSCP value.
+
+Both thresholds are now **configurable** in DSCP Policies:
+- `micro_pkt_threshold` — default: 60 bytes, range 40–200
+- `small_pkt_threshold` — default: 200 bytes, range 100–500
+
+The micro-packet DSCP value is also configurable (CS6, CS7, or EF).
 
 ### Browsing Classification
 Optionally classify web browsing traffic (HTTP/HTTPS/QUIC) with a specific
@@ -104,12 +110,12 @@ The following packages are required for full functionality
 - CAKE queue discipline for upload and download
 - Optional **CAKE multi-queue (cake_mq)** support for multi-core hardware
 - Dual-mode ingress pipeline:
-  - **ctinfo ON** → postrouting rules + kernel ctinfo restore (efficient)
-  - **ctinfo OFF** → prerouting rules mark download before IFB redirect
+- **ctinfo ON** → postrouting rules + kernel ctinfo restore (efficient)
+- **ctinfo OFF** → prerouting rules mark download before IFB redirect
 - nftables-based DSCP marking (IPv4 / IPv6)
 - Separate **UDP and TCP priority classification**
-- **Micro-packet priority** (< 150 bytes → CS6/CS7/EF)
-- **Small packet boost** (150–300 bytes → Priority DSCP)
+- **Configurable Micro-packet priority** (default: < 60 bytes → CS6/CS7/EF)
+- **Configurable Small packet boost** (default: 60–200 bytes → Priority DSCP)
 - **Big HTTPS auto-downgrade** (> 1000 bytes → Bulk DSCP)
 - Optional **web browsing traffic classification** (CS0-only, non-destructive)
 - Optional **bulk traffic classification**
@@ -250,7 +256,7 @@ The installer automatically detects the package manager:
 
 ```sh
 cd /tmp && \
-uclient-fetch -O - https://github.com/Segalmen/openwrt-custom/archive/refs/tags/v1.4.tar.gz | tar xz && \
+uclient-fetch -O - https://github.com/Segalmen/openwrt-custom/archive/refs/tags/v1.5.tar.gz | tar xz && \
 cd openwrt-custom-* && \
 sh install.sh
 ```
