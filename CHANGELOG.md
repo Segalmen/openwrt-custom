@@ -1,5 +1,125 @@
 # Changelog
 
+## v1.5
+
+### Added
+
+- **Configurable Micro-packet threshold** — new `micro_pkt_threshold` option
+  exposed in LuCI (DSCP Policies tab). Default: 60 bytes, range 40–200.
+- **Configurable Small-packet threshold** — new `small_pkt_threshold` option
+  exposed in LuCI (DSCP Policies tab). Default: 200 bytes, range 100–500.
+- Both fields visible only when "Enable micro-packet priority" is checked.
+
+### Improved
+
+- **MicroPkt and SmallPkt rules** now reference `$BULK_DSCP` dynamically
+  instead of hardcoding `cs1`. Guards remain consistent if `gaming_bulk_dscp`
+  is set to a non-default value (e.g. `af11`). Functionally identical for
+  users keeping the default `cs1`.
+
+### Changed
+
+- **Default Micro/Small thresholds tightened from 150/300 to 60/200 bytes**
+  to better target true control-plane packets:
+  - Under 60 bytes: TCP ACKs, UDP keepalives, STUN/ICE probes, DNS
+  - 60 to 200 bytes: small interactive packets (VoIP RTP, telemetry)
+- LuCI labels for Micro-packet section reworded to reflect general use cases
+  (not gaming-specific terminology)
+
+### Fixed
+
+- **Egress hash mode corrected** — `eqdisc_opts` now uses `dual-srchost` in
+  egress (was `dual-dsthost`), matching CAKE's documented best practice:
+  source-based isolation on egress, destination-based isolation on ingress.
+  Throughput tests showed measurable improvement on saturated WAN links
+  without any impact on bufferbloat scores.
+
+### Migration notes
+
+- Users who had calibrated their setup on the old 150/300 byte defaults can
+  preserve the previous behavior by setting `micro_pkt_threshold=150` and
+  `small_pkt_threshold=300` in DSCP Policies after upgrade.
+
+---
+
+## v1.4
+
+### Added
+
+- **One-click Flush Conntrack button** in the DSCP Connections view. Clears
+  active conntrack entries for the priority device (IPv4 + IPv6) configured
+  in DSCP Policies. Reads the IPs dynamically from UCI at click time, asks
+  for confirmation, then displays the number of flushed flows. Useful after
+  changing DSCP rules to force re-classification of in-flight connections.
+- **Diagnostic tool** `tools/dscp-validate.sh` — standalone shell script
+  that validates the full DSCP / SQM / CAKE pipeline. Generates a 19-section
+  read-only report covering nftables rule counters, CAKE per-tin latency,
+  conntrack stats, and a final verdict line.
+- `--anonymize` flag in the diagnostic tool — masks IPv4, IPv6, and hostname
+  in the report for safe public sharing on forums or GitHub issues.
+- `flushConntrack` method in `luci.dscp` rpcd backend, with shell-metacharacter
+  input validation (`safe_ip` helper) and parsed flow-count return.
+- `write` ACL section in `luci-app-dscp.json` granting access to the new
+  `flushConntrack` method.
+- New required package: `conntrack-tools` (auto-installed by `install.sh`).
+
+### Improved
+
+- **`install.sh`** — adds optional file check for `tools/dscp-validate.sh`,
+  installs the diagnostic tool to `/root/dscp-validate.sh` with chmod +x,
+  and mentions it in the post-install summary.
+- **`uninstall.sh`** — renumbered steps from 1/6 to 1/7, new step 6 removes
+  the diagnostic tool from `/root/`.
+- **README** updated with full documentation of new features, including
+  a dedicated "Diagnostic tool" section with usage examples and the list
+  of 19 report sections.
+
+### Fixed
+
+- **Sort direction inverted** in DSCP Connections view — `_sortValue`
+  comparator was using the wrong sign convention, causing all "descending"
+  sorts to actually sort ascending. The bug existed since the initial
+  release and affected every column (Bytes, Packets, DSCP, etc.).
+- **SQM view cleanup** — removed a non-functional Flush Conntrack button
+  that used `rpc.declare({object:'system', method:'exec'})`, which is not
+  exposed by rpcd by default. Functionality is now properly implemented
+  via the new `flushConntrack` rpcd method.
+
+---
+
+## v1.3
+
+### Added
+
+- Strict client-side validation on all port-list fields in DSCP Policies
+  LuCI form (rejects invalid characters, validates ranges)
+
+### Improved
+
+- **DSCP rules refactoring** — six major reorderings for cleaner pipeline:
+  - Bulk classification now runs **before** MicroPkt/SmallPkt rules
+  - MicroPkt/SmallPkt rules now have strict port gating to avoid Voice tin
+    pollution (only matches gaming UDP/TCP ports, never default range)
+  - Browsing classification scope tightened (CS0-only, never overwrites
+    existing DSCP marks)
+  - Removed redundant AWS-specific hack from earlier versions
+- **LuCI form** — default flag values fixed (some toggles were off-by-default
+  but visually appeared on)
+- **README** rewritten for clarity and structure
+
+### Changed
+
+- AWS-specific bulk classification rule removed (was too narrow, now handled
+  by generic `BulkTCPdwn` rules)
+- LuCI labels and help texts updated for consistency
+
+### Fixed
+
+- Default flag values mismatch in LuCI form (visual / actual state)
+- Order-dependent rule matching that could leave Bulk traffic in Voice tin
+
+---
+
 ## v1.2
 
 ### Added
