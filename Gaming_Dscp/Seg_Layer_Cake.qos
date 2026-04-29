@@ -132,6 +132,12 @@ _load_uci_options() {
     MICRO_PKT_ENABLE="$(uci_get "$SQM_SECTION" micro_pkt_enable 1)"
     MICRO_PKT_DSCP="$(uci_get "$SQM_SECTION" micro_pkt_dscp cs6)"
     BIG_HTTPS_DOWNGRADE="$(uci_get "$SQM_SECTION" big_https_downgrade 1)"
+	
+	# Micro/Small packet thresholds (in bytes)
+    # Default 60 = captures pure ACK/keepalive, NOT gaming (avg 70-150 bytes)
+    # Default 200 = upper bound for small interactive packets
+    MICRO_PKT_THRESHOLD="$(uci_get "$SQM_SECTION" micro_pkt_threshold 60)"
+    SMALL_PKT_THRESHOLD="$(uci_get "$SQM_SECTION" small_pkt_threshold 200)"
 
     # Normalize DSCP to lowercase (nftables requirement)
     PRIORITY_UDP_DSCP="$(printf '%s' "$PRIORITY_UDP_DSCP" | tr '[:upper:]' '[:lower:]')"
@@ -155,6 +161,8 @@ _load_uci_options() {
     export BROWSING_ENABLE BROWSING_DSCP BROWSING_TCP_PORTS BROWSING_UDP_PORTS
     export BULK_ENABLE BULK_DSCP
     export MICRO_PKT_ENABLE MICRO_PKT_DSCP BIG_HTTPS_DOWNGRADE
+	export MICRO_PKT_ENABLE MICRO_PKT_DSCP BIG_HTTPS_DOWNGRADE
+    export MICRO_PKT_THRESHOLD SMALL_PKT_THRESHOLD
 }
 
 # =============================================================================
@@ -397,11 +405,32 @@ _build_dscp_rules() {
     fi
 
     # ------------------------------------------------------------------
-    # 4. Micro-packet priority (MUST come after Bulk)
-    # < 150 bytes  → MICRO_PKT_DSCP (default CS6)
-    # 150-300 bytes → PRIORITY_UDP_DSCP
-    # Only matches traffic on the priority UDP/TCP ports — avoids boosting
-    # unrelated small packets (DNS, keepalives, broadcasts, etc.)
+    # 4. Micro-packet / Small-packet priority (MUST come after Bulk)
+    #
+    # MICRO_PKT_THRESHOLD bytes (default 60) → MICRO_PKT_DSCP (default CS6)
+    #   Captures pure control packets only:
+    #     - TCP ACK packets (40-60 bytes typical)
+    #     - UDP STUN/ICE keepalives (28-50 bytes)
+    #     - DNS responses, DHCP renewals, heartbeats
+    #
+    # MICRO_PKT_THRESHOLD to SMALL_PKT_THRESHOLD bytes (default 60-200)
+    #   → PRIORITY_UDP_DSCP (default CS4)
+    #   Captures small interactive packets:
+    #     - VoIP RTP packets (~80-160 bytes)
+    #     - Real-time telemetry, small game state events
+    #
+    # IMPORTANT — gaming packet sizes:
+    #   Modern FPS/sports games (CoD, FIFA) average 70-150 bytes/packet.
+    #   The DEFAULT MICRO threshold of 60 is intentionally LOW so gaming
+    #   traffic does NOT match MicroPkt and saturate the Voice tin codel.
+    #   Earlier 150-byte threshold was too aggressive for FPS workloads.
+    #
+    #   If you have NO priority UDP/TCP enabled (no gaming), you may
+    #   safely raise MICRO_PKT_THRESHOLD to 150-200 to capture more
+    #   small control packets.
+    #
+    # Rules apply to traffic on priority UDP/TCP ports — guards prevent
+    # double-marking traffic already classified by PrioUDP/PrioTCP/Bulk.
     # ------------------------------------------------------------------
 
     # --- UDP variant: only if priority UDP is enabled ---
@@ -415,8 +444,8 @@ _build_dscp_rules() {
             udp sport { "$PRIORITY_UDP_PORTS" } \
             ip dscp != "$PRIORITY_UDP_DSCP" \
             ip dscp != "$PRIORITY_TCP_DSCP" \
-            ip dscp != cs1 \
-            meta length lt 150 \
+            ip dscp != "$BULK_DSCP" \
+            meta length lt $MICRO_PKT_THRESHOLD \
             counter ip dscp set "$MICRO_PKT_DSCP" \
             comment "MicroPktUDPup4"
 
@@ -426,8 +455,8 @@ _build_dscp_rules() {
             udp dport { "$PRIORITY_UDP_PORTS" } \
             ip dscp != "$PRIORITY_UDP_DSCP" \
             ip dscp != "$PRIORITY_TCP_DSCP" \
-            ip dscp != cs1 \
-            meta length lt 150 \
+            ip dscp != "$BULK_DSCP" \
+            meta length lt $MICRO_PKT_THRESHOLD \
             counter ip dscp set "$MICRO_PKT_DSCP" \
             comment "MicroPktUDPdwn4"
 
@@ -437,8 +466,8 @@ _build_dscp_rules() {
             udp sport { "$PRIORITY_UDP_PORTS" } \
             ip dscp != "$PRIORITY_UDP_DSCP" \
             ip dscp != "$PRIORITY_TCP_DSCP" \
-            ip dscp != cs1 \
-            meta length ge 150 meta length lt 300 \
+            ip dscp != "$BULK_DSCP" \
+            meta length ge $MICRO_PKT_THRESHOLD meta length lt $SMALL_PKT_THRESHOLD \
             counter ip dscp set "$PRIORITY_UDP_DSCP" \
             comment "SmallPktUDPup4"
 
@@ -448,8 +477,8 @@ _build_dscp_rules() {
             udp dport { "$PRIORITY_UDP_PORTS" } \
             ip dscp != "$PRIORITY_UDP_DSCP" \
             ip dscp != "$PRIORITY_TCP_DSCP" \
-            ip dscp != cs1 \
-            meta length ge 150 meta length lt 300 \
+            ip dscp != "$BULK_DSCP" \
+            meta length ge $MICRO_PKT_THRESHOLD meta length lt $SMALL_PKT_THRESHOLD \
             counter ip dscp set "$PRIORITY_UDP_DSCP" \
             comment "SmallPktUDPdwn4"
 
@@ -459,8 +488,8 @@ _build_dscp_rules() {
             udp sport { "$PRIORITY_UDP_PORTS" } \
             ip6 dscp != "$PRIORITY_UDP_DSCP" \
             ip6 dscp != "$PRIORITY_TCP_DSCP" \
-            ip6 dscp != cs1 \
-            meta length lt 150 \
+            ip6 dscp != "$BULK_DSCP" \
+            meta length lt $MICRO_PKT_THRESHOLD \
             counter ip6 dscp set "$MICRO_PKT_DSCP" \
             comment "MicroPktUDPup6"
 
@@ -470,8 +499,8 @@ _build_dscp_rules() {
             udp dport { "$PRIORITY_UDP_PORTS" } \
             ip6 dscp != "$PRIORITY_UDP_DSCP" \
             ip6 dscp != "$PRIORITY_TCP_DSCP" \
-            ip6 dscp != cs1 \
-            meta length lt 150 \
+            ip6 dscp != "$BULK_DSCP" \
+            meta length lt $MICRO_PKT_THRESHOLD \
             counter ip6 dscp set "$MICRO_PKT_DSCP" \
             comment "MicroPktUDPdwn6"
 
@@ -481,8 +510,8 @@ _build_dscp_rules() {
             udp sport { "$PRIORITY_UDP_PORTS" } \
             ip6 dscp != "$PRIORITY_UDP_DSCP" \
             ip6 dscp != "$PRIORITY_TCP_DSCP" \
-            ip6 dscp != cs1 \
-            meta length ge 150 meta length lt 300 \
+            ip6 dscp != "$BULK_DSCP" \
+            meta length ge $MICRO_PKT_THRESHOLD meta length lt $SMALL_PKT_THRESHOLD \
             counter ip6 dscp set "$PRIORITY_UDP_DSCP" \
             comment "SmallPktUDPup6"
 
@@ -492,8 +521,8 @@ _build_dscp_rules() {
             udp dport { "$PRIORITY_UDP_PORTS" } \
             ip6 dscp != "$PRIORITY_UDP_DSCP" \
             ip6 dscp != "$PRIORITY_TCP_DSCP" \
-            ip6 dscp != cs1 \
-            meta length ge 150 meta length lt 300 \
+            ip6 dscp != "$BULK_DSCP" \
+            meta length ge $MICRO_PKT_THRESHOLD meta length lt $SMALL_PKT_THRESHOLD \
             counter ip6 dscp set "$PRIORITY_UDP_DSCP" \
             comment "SmallPktUDPdwn6"
     fi
@@ -509,8 +538,8 @@ _build_dscp_rules() {
             tcp sport { "$PRIORITY_TCP_PORTS" } \
             ip dscp != "$PRIORITY_UDP_DSCP" \
             ip dscp != "$PRIORITY_TCP_DSCP" \
-            ip dscp != cs1 \
-            meta length lt 150 \
+            ip dscp != "$BULK_DSCP" \
+            meta length lt $MICRO_PKT_THRESHOLD \
             counter ip dscp set "$MICRO_PKT_DSCP" \
             comment "MicroPktTCPup4"
 
@@ -520,8 +549,8 @@ _build_dscp_rules() {
             tcp dport { "$PRIORITY_TCP_PORTS" } \
             ip dscp != "$PRIORITY_UDP_DSCP" \
             ip dscp != "$PRIORITY_TCP_DSCP" \
-            ip dscp != cs1 \
-            meta length lt 150 \
+            ip dscp != "$BULK_DSCP" \
+            meta length lt $MICRO_PKT_THRESHOLD \
             counter ip dscp set "$MICRO_PKT_DSCP" \
             comment "MicroPktTCPdwn4"
 
@@ -531,8 +560,8 @@ _build_dscp_rules() {
             tcp sport { "$PRIORITY_TCP_PORTS" } \
             ip dscp != "$PRIORITY_UDP_DSCP" \
             ip dscp != "$PRIORITY_TCP_DSCP" \
-            ip dscp != cs1 \
-            meta length ge 150 meta length lt 300 \
+            ip dscp != "$BULK_DSCP" \
+            meta length ge $MICRO_PKT_THRESHOLD meta length lt $SMALL_PKT_THRESHOLD \
             counter ip dscp set "$PRIORITY_UDP_DSCP" \
             comment "SmallPktTCPup4"
 
@@ -542,8 +571,8 @@ _build_dscp_rules() {
             tcp dport { "$PRIORITY_TCP_PORTS" } \
             ip dscp != "$PRIORITY_UDP_DSCP" \
             ip dscp != "$PRIORITY_TCP_DSCP" \
-            ip dscp != cs1 \
-            meta length ge 150 meta length lt 300 \
+            ip dscp != "$BULK_DSCP" \
+            meta length ge $MICRO_PKT_THRESHOLD meta length lt $SMALL_PKT_THRESHOLD \
             counter ip dscp set "$PRIORITY_UDP_DSCP" \
             comment "SmallPktTCPdwn4"
 
@@ -553,8 +582,8 @@ _build_dscp_rules() {
             tcp sport { "$PRIORITY_TCP_PORTS" } \
             ip6 dscp != "$PRIORITY_UDP_DSCP" \
             ip6 dscp != "$PRIORITY_TCP_DSCP" \
-            ip6 dscp != cs1 \
-            meta length lt 150 \
+            ip6 dscp != "$BULK_DSCP" \
+            meta length lt $MICRO_PKT_THRESHOLD \
             counter ip6 dscp set "$MICRO_PKT_DSCP" \
             comment "MicroPktTCPup6"
 
@@ -564,8 +593,8 @@ _build_dscp_rules() {
             tcp dport { "$PRIORITY_TCP_PORTS" } \
             ip6 dscp != "$PRIORITY_UDP_DSCP" \
             ip6 dscp != "$PRIORITY_TCP_DSCP" \
-            ip6 dscp != cs1 \
-            meta length lt 150 \
+            ip6 dscp != "$BULK_DSCP" \
+            meta length lt $MICRO_PKT_THRESHOLD \
             counter ip6 dscp set "$MICRO_PKT_DSCP" \
             comment "MicroPktTCPdwn6"
 
@@ -575,8 +604,8 @@ _build_dscp_rules() {
             tcp sport { "$PRIORITY_TCP_PORTS" } \
             ip6 dscp != "$PRIORITY_UDP_DSCP" \
             ip6 dscp != "$PRIORITY_TCP_DSCP" \
-            ip6 dscp != cs1 \
-            meta length ge 150 meta length lt 300 \
+            ip6 dscp != "$BULK_DSCP" \
+            meta length ge $MICRO_PKT_THRESHOLD meta length lt $SMALL_PKT_THRESHOLD \
             counter ip6 dscp set "$PRIORITY_UDP_DSCP" \
             comment "SmallPktTCPup6"
 
@@ -586,8 +615,8 @@ _build_dscp_rules() {
             tcp dport { "$PRIORITY_TCP_PORTS" } \
             ip6 dscp != "$PRIORITY_UDP_DSCP" \
             ip6 dscp != "$PRIORITY_TCP_DSCP" \
-            ip6 dscp != cs1 \
-            meta length ge 150 meta length lt 300 \
+            ip6 dscp != "$BULK_DSCP" \
+            meta length ge $MICRO_PKT_THRESHOLD meta length lt $SMALL_PKT_THRESHOLD \
             counter ip6 dscp set "$PRIORITY_UDP_DSCP" \
             comment "SmallPktTCPdwn6"
     fi
