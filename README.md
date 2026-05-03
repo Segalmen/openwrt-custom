@@ -34,6 +34,15 @@ and the kernel handles ingress restore efficiently.
 When disabled, classification rules move to prerouting, marking download
 traffic **before** IFB redirection so CAKE sees the correct DSCP.
 
+> **Double NAT / downstream router use case:**
+> If this router sits behind another NAT device (e.g. a secondary
+> router or access point), disable ctinfo. In this topology, ingress
+> reply packets arrive with the upstream WAN IP as destination —
+> not the LAN client IP — making postrouting IP-based rules ineffective.
+> With ctinfo OFF, prerouting rules fire before NAT translation,
+> where port-based classification (browsing, bulk) works correctly
+> across all LAN clients regardless of the NAT layer.
+
 ### Priority UDP Classification
 Mark UDP traffic from/to priority devices on the specified ports with a
 configurable DSCP value. Suitable for gaming, VoIP, and real-time apps.
@@ -110,8 +119,8 @@ The following packages are required for full functionality
 - CAKE queue discipline for upload and download
 - Optional **CAKE multi-queue (cake_mq)** support for multi-core hardware
 - Dual-mode ingress pipeline:
-- **ctinfo ON** → postrouting rules + kernel ctinfo restore (efficient)
-- **ctinfo OFF** → prerouting rules mark download before IFB redirect
+  - **ctinfo ON** → postrouting rules + kernel ctinfo restore (efficient)
+  - **ctinfo OFF** → prerouting rules mark download before IFB redirect
 - nftables-based DSCP marking (IPv4 / IPv6)
 - Separate **UDP and TCP priority classification**
 - **Configurable Micro-packet priority** (default: < 60 bytes → CS6/CS7/EF)
@@ -157,7 +166,10 @@ nftables postrouting
 tc ingress (simple redirect)
   → CAKE diffserv classification
 ```
-
+> Recommended when the router operates behind another NAT device.
+> Port-based rules (browsing, bulk) remain fully functional.
+> IP-based priority rules (gaming_ip) are not effective in this mode
+> for ingress traffic due to NAT address rewriting.
 Both modes result in correct CAKE DiffServ behaviour for all traffic directions.
 
 ---
