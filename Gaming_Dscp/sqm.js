@@ -293,7 +293,8 @@ return view.extend({
             _('Browsing DSCP'));
         o.value('af21', _('AF21 — Low-latency web'));
         o.value('af31', _('AF31 — Higher priority'));
-        o.value('cs1',  _('CS1 — Background'));
+        o.value('af41', _('AF41 — Multimedia / Streaming'));
+		o.value('cs1',  _('CS1 — Background'));
         o.value('cs0',  _('CS0 — Default'));
         o.default     = 'af21';
         o.rmempty     = true;
