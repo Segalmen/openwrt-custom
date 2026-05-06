@@ -132,6 +132,11 @@ return view.extend({
         // ==================================================================
         // Tab: DSCP Policies
         // ==================================================================
+        // CAKE diffserv4 tier mapping reference (kernel sch_cake.c):
+        //   Voice tier (highest): CS6, CS7, EF, VA
+        //   Video tier:           CS4, CS5, AF4x, AF5x, AF2x, AF3x
+        //   Best Effort tier:     CS0, CS2, CS3, AF1x (some)
+        //   Bulk tier (lowest):   CS1, LEPHB
 
         // --- Multi-queue ---
         o = s.taboption('tab_dscp', form.Flag, 'enable_mq',
@@ -174,15 +179,25 @@ return view.extend({
 
         o = s.taboption('tab_dscp', form.ListValue, 'priority_udp_dscp',
             _('Priority DSCP — UDP'));
-        o.value('ef',   _('EF — Expedited Forwarding (highest)'));
-        o.value('cs5',  _('CS5 — Real-Time / High Priority'));
-        o.value('cs4',  _('CS4 — High Priority'));
-        o.value('af41', _('AF41 — Interactive'));
-        o.value('cs0',  _('CS0 — Default'));
+        o.value('ef',   _('EF — Expedited Forwarding (→ Voice tier, highest)'));
+        o.value('va',   _('VA — Voice Admit (→ Voice tier)'));
+        o.value('cs5',  _('CS5 — Signaling (→ Video tier)'));
+        o.value('cs4',  _('CS4 — Real-time interactive (→ Video tier) ★ recommended'));
+        o.value('af41', _('AF41 — Multimedia conferencing low drop (→ Video tier)'));
+        o.value('af42', _('AF42 — Multimedia conferencing medium drop (→ Video tier)'));
+        o.value('af43', _('AF43 — Multimedia conferencing high drop (→ Video tier)'));
+        o.value('af31', _('AF31 — Multimedia streaming (→ Video tier)'));
+        o.value('af32', _('AF32 — Multimedia streaming medium drop (→ Video tier)'));
+        o.value('af33', _('AF33 — Multimedia streaming high drop (→ Video tier)'));
+        o.value('cs3',  _('CS3 — Broadcast (→ Best Effort tier)'));
+        o.value('cs2',  _('CS2 — OAM (→ Best Effort tier)'));
+        o.value('cs0',  _('CS0 — Default (→ Best Effort tier)'));
         o.default     = 'ef';
         o.rmempty     = false;
         o.depends('priority_udp_enable', '1');
-        o.description = _('DSCP value applied to matched UDP traffic.');
+        o.description = _('DSCP value applied to matched UDP traffic. ' +
+                          'CS4 is the recommended value for online gaming on diffserv4 (isolates ' +
+                          'gaming in Video tier without competing with Voice/network control).');
 
         o = s.taboption('tab_dscp', form.Value, 'gaming_udp_ports',
             _('Priority UDP ports'));
@@ -202,14 +217,21 @@ return view.extend({
 
         o = s.taboption('tab_dscp', form.ListValue, 'priority_tcp_dscp',
             _('Priority DSCP — TCP'));
-        o.value('ef',   _('EF — Expedited Forwarding (highest)'));
-        o.value('cs4',  _('CS4 — High Priority'));
-        o.value('af41', _('AF41 — Interactive'));
-        o.value('cs0',  _('CS0 — Default'));
+        o.value('ef',   _('EF — Expedited Forwarding (→ Voice tier)'));
+        o.value('cs5',  _('CS5 — Signaling (→ Video tier)'));
+        o.value('cs4',  _('CS4 — Real-time interactive (→ Video tier)'));
+        o.value('af41', _('AF41 — Multimedia conferencing (→ Video tier)'));
+        o.value('af42', _('AF42 — Multimedia conferencing medium drop (→ Video tier)'));
+        o.value('af43', _('AF43 — Multimedia conferencing high drop (→ Video tier)'));
+        o.value('af31', _('AF31 — Multimedia streaming (→ Video tier)'));
+        o.value('cs3',  _('CS3 — Broadcast / Signaling (→ Best Effort tier)'));
+        o.value('cs2',  _('CS2 — OAM / network mgmt (→ Best Effort tier)'));
+        o.value('cs0',  _('CS0 — Default (→ Best Effort) ★ recommended for TCP gaming'));
         o.default     = 'af41';
         o.rmempty     = false;
         o.depends('priority_tcp_enable', '1');
-        o.description = _('DSCP value applied to matched TCP traffic.');
+        o.description = _('DSCP value applied to matched TCP traffic. ' +
+                          'CS0 is recommended: gaming TCP (login/auth) shouldn\'t compete with real-time UDP.');
 
         o = s.taboption('tab_dscp', form.Value, 'gaming_tcp_ports',
             _('Priority TCP ports'));
@@ -232,13 +254,16 @@ return view.extend({
 
         o = s.taboption('tab_dscp', form.ListValue, 'micro_pkt_dscp',
             _('Micro-packet DSCP'));
-        o.value('cs6', _('CS6 — Network Control (highest CAKE tin)'));
-        o.value('cs7', _('CS7 — Network Control (absolute highest)'));
-        o.value('ef',  _('EF — Expedited Forwarding'));
+        o.value('cs7', _('CS7 — Network control absolute (→ Voice tier, highest)'));
+        o.value('cs6', _('CS6 — Network control (→ Voice tier) ★ recommended'));
+        o.value('ef',  _('EF — Expedited Forwarding (→ Voice tier)'));
+        o.value('va',  _('VA — Voice Admit (→ Voice tier)'));
         o.default     = 'cs6';
         o.rmempty     = false;
         o.depends('micro_pkt_enable', '1');
-        o.description = _('DSCP value applied to ultra-small packets from priority devices.');
+        o.description = _('DSCP value applied to ultra-small packets from priority devices. ' +
+                          'CS6 is the standard choice — guarantees Voice tier without ' +
+                          'reserved RFC4594 conflicts (CS7 is reserved for L2 control).');
 		
 		// ==== Micro / Small packet thresholds ====
         o = s.taboption('tab_dscp', form.Value, 'micro_pkt_threshold',
@@ -291,15 +316,30 @@ return view.extend({
 
         o = s.taboption('tab_dscp', form.ListValue, 'browsing_dscp',
             _('Browsing DSCP'));
-        o.value('af21', _('AF21 — Low-latency web'));
-        o.value('af31', _('AF31 — Higher priority'));
-        o.value('af41', _('AF41 — Multimedia / Streaming'));
-		o.value('cs1',  _('CS1 — Background'));
-        o.value('cs0',  _('CS0 — Default'));
+        o.value('af31', _('AF31 — Multimedia streaming (→ Video tier, highest browsing prio)'));
+        o.value('af21', _('AF21 — Low-latency web (→ Video tier, default)'));
+        o.value('af22', _('AF22 — Low-latency web medium drop (→ Video tier)'));
+        o.value('af23', _('AF23 — Low-latency web high drop (→ Video tier)'));
+        o.value('cs3',  _('CS3 — Best Effort prioritized ★ gaming-friendly'));
+        o.value('cs2',  _('CS2 — Best Effort, OAM-like'));
+        o.value('cs0',  _('CS0 — Default (→ Best Effort, no marking benefit)'));
+        o.value('af13', _('AF13 — Bulk class, high drop (→ Bulk tier)'));
+        o.value('af12', _('AF12 — Bulk class, medium drop (→ Bulk tier)'));
+        o.value('af11', _('AF11 — Bulk class, low drop (→ Bulk tier)'));
+        o.value('cs1',  _('CS1 — Background / Bulk (→ Bulk tier)'));
+        o.value('lephb',_('LEPHB — Lower Effort PHB (RFC8622, → Bulk tier, modern)'));
         o.default     = 'af21';
         o.rmempty     = true;
         o.depends('browsing_enable', '1');
-        o.description = _('DSCP value applied to web browsing traffic.');
+        o.description = _('DSCP value applied to web browsing traffic. ' +
+                          '<br><b>Tier mapping (diffserv4):</b> ' +
+                          'AF2x/AF3x → Video • CS2/CS3 → Best Effort • CS1/AF1x/LEPHB → Bulk. ' +
+                          '<br><b>For gaming-first setups:</b> use CS3 to keep browsing in Best Effort ' +
+                          '(Video tier reserved for gaming). ' +
+                          '<br><b>For browsing-priority setups:</b> use AF21 (default) to boost web ' +
+                          'over bulk downloads. ' +
+                          '<br><b>For deprioritization:</b> use CS1 or LEPHB to push browsing below ' +
+                          'real-time and Best Effort.');
 
         // ==== Bulk ====
         o = s.taboption('tab_dscp', form.Flag, 'gaming_bulk_enable',
@@ -311,13 +351,18 @@ return view.extend({
 
         o = s.taboption('tab_dscp', form.ListValue, 'gaming_bulk_dscp',
             _('Bulk traffic DSCP'));
-        o.value('cs1',  _('CS1 — Background / Bulk'));
-        o.value('af11', _('AF11 — Bulk but not lowest'));
-        o.value('cs0',  _('CS0 — Default'));
+        o.value('cs1',  _('CS1 — Background / Bulk ★ recommended'));
+        o.value('lephb',_('LEPHB — Lower Effort PHB (RFC8622, modern bulk)'));
+        o.value('af11', _('AF11 — Bulk, low drop precedence'));
+        o.value('af12', _('AF12 — Bulk, medium drop precedence'));
+        o.value('af13', _('AF13 — Bulk, high drop precedence'));
+        o.value('cs0',  _('CS0 — Default (→ Best Effort, no deprioritization)'));
         o.default     = 'cs1';
         o.rmempty     = true;
         o.depends('gaming_bulk_enable', '1');
-        o.description = _('DSCP value applied to bulk download traffic from priority devices.');
+        o.description = _('DSCP value applied to bulk download traffic from priority devices. ' +
+                          'CS1 is the classical choice. LEPHB (RFC8622) is the modern equivalent ' +
+                          'specifically designed for "scavenger" traffic that yields to everything else.');
 
         // ==== Big HTTPS auto-downgrade ====
         o = s.taboption('tab_dscp', form.Flag, 'big_https_downgrade',

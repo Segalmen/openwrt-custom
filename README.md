@@ -16,6 +16,7 @@ This project provides:
 - LuCI custom view with real-time DSCP Connections monitor
 - One-click conntrack flush button for the priority device
 - Diagnostic tool to validate the full DSCP / SQM / CAKE pipeline
+- **Tier-aware DSCP dropdowns** with full coverage of all CAKE tiers
 
 ---
 
@@ -62,7 +63,7 @@ Both thresholds are now **configurable** in DSCP Policies:
 - `micro_pkt_threshold` — default: 60 bytes, range 40–200
 - `small_pkt_threshold` — default: 200 bytes, range 100–500
 
-The micro-packet DSCP value is also configurable (CS6, CS7, or EF).
+The micro-packet DSCP value is also configurable (CS6, CS7, EF, VA).
 
 ### Browsing Classification
 Optionally classify web browsing traffic (HTTP/HTTPS/QUIC) with a specific
@@ -76,6 +77,45 @@ value so they do not compete with real-time traffic.
 Automatically downgrade large HTTPS packets (> 1000 bytes) from priority
 devices to the Bulk DSCP value. Prevents big downloads from stealing
 bandwidth from real-time traffic, even when using port 443.
+
+---
+
+## DSCP Quick Reference
+
+Each dropdown in the **DSCP Policies** tab now displays the target CAKE
+tier directly in the option label, so you can choose values without
+memorizing the diffserv4 mapping.
+
+### CAKE diffserv4 tier mapping
+
+| CAKE Tier | DSCP values | Typical use |
+|-----------|-------------|-------------|
+| **Voice** (highest) | CS6, CS7, EF, VA | Network control, VoIP, gaming micro-packets |
+| **Video** | CS4, CS5, AF2x, AF3x, AF4x | Real-time interactive, multimedia, signaling |
+| **Best Effort** | CS0, CS2, CS3 | Default web, OAM, broadcast |
+| **Bulk** (lowest) | CS1, AF1x, LEPHB | Background, scavenger, bulk downloads |
+
+### Choosing the right value for browsing
+
+The `browsing_dscp` dropdown now spans all four tiers, with three
+recommended profiles:
+
+- **Gaming-first setup** → use `CS3` (browsing in Best Effort, keeps
+  Video tier reserved for real-time gaming)
+- **Browsing-priority setup** → use `AF21` (default, boosts web above
+  bulk downloads in Video tier)
+- **Strong deprioritization** → use `CS1` or `LEPHB` (browsing yields
+  to everything in Bulk tier)
+
+### Recommended values per dropdown
+
+| Dropdown | Recommended | Rationale |
+|----------|-------------|-----------|
+| Priority UDP | `CS4` | Isolates gaming in Video tier |
+| Priority TCP | `CS0` | Gaming TCP (auth, login) shouldn't compete with real-time UDP |
+| Micro-packet | `CS6` | Standard network control class |
+| Browsing | `AF21` (default) or `CS3` (gaming-first) | See profiles above |
+| Bulk | `CS1` | Classic background; `LEPHB` for the modern RFC8622 equivalent |
 
 ---
 
@@ -123,13 +163,16 @@ The following packages are required for full functionality
   - **ctinfo OFF** → prerouting rules mark download before IFB redirect
 - nftables-based DSCP marking (IPv4 / IPv6)
 - Separate **UDP and TCP priority classification**
-- **Configurable Micro-packet priority** (default: < 60 bytes → CS6/CS7/EF)
+- **Configurable Micro-packet priority** (default: < 60 bytes → CS6/CS7/EF/VA)
 - **Configurable Small packet boost** (default: 60–200 bytes → Priority DSCP)
 - **Big HTTPS auto-downgrade** (> 1000 bytes → Bulk DSCP)
 - Optional **web browsing traffic classification** (CS0-only, non-destructive)
 - Optional **bulk traffic classification**
 - Browsing conditioned on CS0 — never overwrites existing DSCP marks
 - IPv4 and IPv6 support throughout
+- **Tier-aware DSCP dropdowns** — every option shows its target CAKE tier
+- **Full DSCP coverage** — all standard PHBs available across dropdowns,
+  including LEPHB (RFC8622) for modern scavenger traffic
 - Automatic SQM lifecycle integration (start/stop/restart)
 - Clean nftables setup and teardown hooks
 - Automatic dependency installation using **opkg** or **apk**
@@ -268,7 +311,7 @@ The installer automatically detects the package manager:
 
 ```sh
 cd /tmp && \
-uclient-fetch -O - https://github.com/Segalmen/openwrt-custom/archive/refs/tags/v1.5.tar.gz | tar xz && \
+uclient-fetch -O - https://github.com/Segalmen/openwrt-custom/archive/refs/tags/v1.6.tar.gz | tar xz && \
 cd openwrt-custom-* && \
 sh install.sh
 ```
@@ -291,6 +334,17 @@ sh install.sh --force     # Overwrite existing SQM config without confirmation
 - Restart required services
 - Install the diagnostic tool to `/root/dscp-validate.sh`
 
+### Upgrading from an earlier version
+
+Existing UCI configurations are fully compatible. The installer prompts
+before overwriting `/etc/config/sqm` — answer **N** to keep your current
+DSCP settings. The new tier-aware dropdowns will display your existing
+values correctly.
+
+To force a refresh of just the LuCI view files without touching your
+config, use `sh install.sh --force` (your `/etc/config/sqm` is still
+backed up as `.orig` first).
+
 ---
 
 ## Post-installation steps (IMPORTANT)
@@ -305,6 +359,8 @@ After installation, configure SQM in LuCI:
 3. Go to the **DSCP Policies** tab:
    - Enter your priority device IPv4/IPv6 addresses
    - Enable and configure UDP/TCP priority, micro-packets, bulk, browsing
+   - See the [DSCP Quick Reference](#dscp-quick-reference) section above
+     for guidance on choosing values
 4. Click **Save & Apply**
 
 ⚠️ The installer does not set bandwidth or overhead values automatically.
