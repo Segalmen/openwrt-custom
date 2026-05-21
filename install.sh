@@ -46,7 +46,7 @@ do_run() {
     if [ "$DRY_RUN" = "1" ]; then
         printf "  [DRY-RUN] %s\n" "$*"
     else
-        eval "$@"
+        "$@"
     fi
 }
 
@@ -85,10 +85,17 @@ fi
 check_disk_space() {
     AVAIL=$(df /overlay 2>/dev/null | awk 'NR==2 {print $4}')
     if [ -z "$AVAIL" ]; then
-        AVAIL=$(df / | awk 'NR==2 {print $4}')
+        AVAIL=$(df / 2>/dev/null | awk 'NR==2 {print $4}')
     fi
+    # Validate AVAIL is purely numeric — empty or non-numeric means df failed
+    case "$AVAIL" in
+        ''|*[!0-9]*)
+            warn "Could not determine available disk space — proceeding without check."
+            return 0
+            ;;
+    esac
     # Threshold: 5120 KB = 5 MB
-    if [ "$AVAIL" -lt 5120 ] 2>/dev/null; then
+    if [ "$AVAIL" -lt 5120 ]; then
         err "Insufficient disk space on /overlay: ${AVAIL}K available (minimum 5 MB required)."
         err "Free up some space before continuing."
         exit 1
@@ -168,6 +175,17 @@ luci-lib-jsonc
 conntrack-tools
 "
 
+# Critical packages — install MUST fail if any of these are missing.
+# Anything not listed here is best-effort (LuCI UI helpers, optional tools).
+CRITICAL_PKGS="sqm-scripts kmod-sched-cake kmod-ifb kmod-sched-ctinfo kmod-nf-conntrack kmod-nft-core nftables $PKG_TC"
+
+is_critical_pkg() {
+    case " $CRITICAL_PKGS " in
+        *" $1 "*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 info "Updating package index"
 if [ "$DRY_RUN" = "0" ]; then
     if ! pkg_update; then
@@ -176,6 +194,7 @@ if [ "$DRY_RUN" = "0" ]; then
 fi
 
 INSTALL_ERRORS=0
+CRITICAL_FAIL=0
 info "Checking and installing required packages"
 
 for pkg in $REQUIRED_PKGS; do
@@ -191,15 +210,26 @@ for pkg in $REQUIRED_PKGS; do
         if pkg_install "$pkg"; then
             ok "$pkg installed"
         else
-            warn "Failed to install $pkg — continuing without interruption"
+            if is_critical_pkg "$pkg"; then
+                err "Failed to install CRITICAL package: $pkg"
+                CRITICAL_FAIL=$((CRITICAL_FAIL + 1))
+            else
+                warn "Failed to install $pkg — continuing (non-critical)"
+            fi
             INSTALL_ERRORS=$((INSTALL_ERRORS + 1))
         fi
     fi
 done
 
+if [ "$CRITICAL_FAIL" -gt 0 ]; then
+    err "$CRITICAL_FAIL critical package(s) failed to install — SQM cannot run without them."
+    err "Resolve repository/network issues and re-run install.sh."
+    exit 1
+fi
+
 if [ "$INSTALL_ERRORS" -gt 0 ]; then
-    warn "$INSTALL_ERRORS package(s) could not be installed."
-    warn "The system may not work correctly."
+    warn "$INSTALL_ERRORS non-critical package(s) could not be installed."
+    warn "Core SQM should work, but some UI features may be degraded."
 fi
 
 # =============================================================================
@@ -213,7 +243,7 @@ do_run mkdir -p /usr/share/rpcd/acl.d
 do_run mkdir -p /www/luci-static/resources/view/dscp
 
 do_run cp connections/rpcd/luci.dscp /usr/libexec/rpcd/luci.dscp
-do_run chmod +x /usr/libexec/rpcd/luci.dscp
+do_run chmod 0755 /usr/libexec/rpcd/luci.dscp
 
 # JSON menus (tolerant if directory is empty)
 for f in connections/menu/*.json; do
@@ -235,10 +265,16 @@ info "Installing SQM configuration"
 
 do_run mkdir -p /etc/config
 
+SQM_CFG_REPLACED=0
+
 if [ "$DRY_RUN" = "0" ]; then
     if [ -f /etc/config/sqm ] && [ ! -f /etc/config/sqm.orig ]; then
-        info "Backing up existing SQM config → /etc/config/sqm.orig"
-        cp /etc/config/sqm /etc/config/sqm.orig
+        if cmp -s /etc/config/sqm Gaming_Dscp/sqm.config; then
+            info "Existing /etc/config/sqm is already the custom version — skipping backup"
+        else
+            info "Backing up existing SQM config → /etc/config/sqm.orig"
+            cp /etc/config/sqm /etc/config/sqm.orig
+        fi
     fi
 
     if [ -f /etc/config/sqm ] && [ "$FORCE" = "0" ]; then
@@ -249,6 +285,7 @@ if [ "$DRY_RUN" = "0" ]; then
             [oOyY])
                 info "Replacing SQM config"
                 cp Gaming_Dscp/sqm.config /etc/config/sqm
+                SQM_CFG_REPLACED=1
                 ;;
             *)
                 warn "SQM config kept — you will need to select Seg_Layer_Cake.qos manually in LuCI"
@@ -256,6 +293,7 @@ if [ "$DRY_RUN" = "0" ]; then
         esac
     else
         cp Gaming_Dscp/sqm.config /etc/config/sqm
+        SQM_CFG_REPLACED=1
     fi
 else
     info "[DRY-RUN] Copy Gaming_Dscp/sqm.config → /etc/config/sqm"
@@ -268,7 +306,7 @@ info "Installing SQM script Seg_Layer_Cake.qos"
 
 do_run mkdir -p /usr/lib/sqm
 do_run cp Gaming_Dscp/Seg_Layer_Cake.qos /usr/lib/sqm/Seg_Layer_Cake.qos
-do_run chmod +x /usr/lib/sqm/Seg_Layer_Cake.qos
+do_run chmod 0755 /usr/lib/sqm/Seg_Layer_Cake.qos
 
 ok "Seg_Layer_Cake.qos installed"
 
@@ -282,9 +320,13 @@ do_run mkdir -p /www/luci-static/resources/view/network
 if [ "$DRY_RUN" = "0" ]; then
     if [ -f /www/luci-static/resources/view/network/sqm.js ] && \
        [ ! -f /www/luci-static/resources/view/network/sqm.js.orig ]; then
-        info "Backing up original sqm.js → sqm.js.orig"
-        cp /www/luci-static/resources/view/network/sqm.js \
-           /www/luci-static/resources/view/network/sqm.js.orig
+        if cmp -s /www/luci-static/resources/view/network/sqm.js Gaming_Dscp/sqm.js; then
+            info "Existing sqm.js is already the custom version — skipping backup"
+        else
+            info "Backing up original sqm.js → sqm.js.orig"
+            cp /www/luci-static/resources/view/network/sqm.js \
+               /www/luci-static/resources/view/network/sqm.js.orig
+        fi
     fi
     cp Gaming_Dscp/sqm.js /www/luci-static/resources/view/network/sqm.js
 else
@@ -299,7 +341,7 @@ ok "LuCI SQM view installed"
 if [ -f "tools/dscp-validate.sh" ]; then
     info "Installing diagnostic tool"
     do_run cp tools/dscp-validate.sh /root/dscp-validate.sh
-    do_run chmod +x /root/dscp-validate.sh
+    do_run chmod 0755 /root/dscp-validate.sh
     ok "Diagnostic tool installed → /root/dscp-validate.sh"
 else
     warn "Skipping diagnostic tool (tools/dscp-validate.sh not present)"
@@ -351,12 +393,17 @@ fi
 # =============================================================================
 info "Pre-configuring SQM via UCI"
 
-if [ "$DRY_RUN" = "0" ]; then
+if [ "$DRY_RUN" = "0" ] && [ "$SQM_CFG_REPLACED" = "1" ]; then
+    # Defensive: ensure @queue[0] exists before setting (A2-4)
+    uci -q get sqm.@queue[0] >/dev/null 2>&1 || uci add sqm queue >/dev/null
     uci set sqm.@queue[0].interface="$WAN_IFACE"
     uci set sqm.@queue[0].enabled='1'
     uci set sqm.@queue[0].script='Seg_Layer_Cake.qos'
     uci commit sqm
     ok "SQM UCI configuration applied"
+elif [ "$DRY_RUN" = "0" ]; then
+    info "Existing SQM config preserved — UCI pre-configuration skipped"
+    info "→ In LuCI: select 'Seg_Layer_Cake.qos' as Queue Discipline script"
 else
     info "[DRY-RUN] uci set sqm.@queue[0].interface=$WAN_IFACE"
     info "[DRY-RUN] uci set sqm.@queue[0].script=Seg_Layer_Cake.qos"
@@ -393,8 +440,13 @@ printf "${GRN}============================================================${RST}
 printf "${GRN}  Installation completed successfully${RST}\n"
 printf "${GRN}============================================================${RST}\n"
 printf "\n"
-printf "  Configured WAN interface: %s\n" "$WAN_IFACE"
-printf "  Active SQM script        : Seg_Layer_Cake.qos\n"
+if [ "$SQM_CFG_REPLACED" = "1" ] || [ "$DRY_RUN" = "1" ]; then
+    printf "  Configured WAN interface: %s\n" "$WAN_IFACE"
+    printf "  Active SQM script        : Seg_Layer_Cake.qos\n"
+else
+    printf "  Detected WAN interface   : %s (existing config preserved — verify in LuCI)\n" "$WAN_IFACE"
+    printf "  Active SQM script        : (existing config preserved — set manually in LuCI)\n"
+fi
 printf "\n"
 printf "${YEL}  IMPORTANT — Post-installation steps:${RST}\n"
 printf "  1. LuCI → Network → SQM QoS\n"
