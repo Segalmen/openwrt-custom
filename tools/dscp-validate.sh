@@ -18,6 +18,9 @@
 # Designed for openwrt-custom v1.3+ (Seg_Layer_Cake.qos).
 # =============================================================================
 
+# Force C locale for predictable numeric/text parsing (awk/sed/printf)
+export LC_ALL=C
+
 # Parse command-line arguments
 ANONYMIZE=0
 for arg in "$@"; do
@@ -243,9 +246,11 @@ DROP_DOWN="$(tc -s qdisc show dev "$IFB_IF" 2>/dev/null | sed -n 's/.*dropped \(
 # Helper to format bytes humanly
 hr_bytes() {
     n="${1:-0}"
-    if [ "$n" -lt 1024 ] 2>/dev/null; then echo "$n B"
-    elif [ "$n" -lt 1048576 ] 2>/dev/null; then echo "$((n / 1024)) KB"
-    elif [ "$n" -lt 1073741824 ] 2>/dev/null; then echo "$((n / 1048576)) MB"
+    # Guard against non-numeric input (extraction failures, partial sed matches)
+    case "$n" in ''|*[!0-9]*) n=0 ;; esac
+    if [ "$n" -lt 1024 ]; then echo "$n B"
+    elif [ "$n" -lt 1048576 ]; then echo "$((n / 1024)) KB"
+    elif [ "$n" -lt 1073741824 ]; then echo "$((n / 1048576)) MB"
     else echo "$((n / 1073741824)) GB"
     fi
 }
@@ -269,21 +274,25 @@ fi
 
 echo "  Priority IPv4 : ${PRIO_IP4_DISP:-(not set)}"
 echo "  Priority IPv6 : ${PRIO_IP6_DISP:-(not set)}"
-if [ -n "$PRIO_IP4" ]; then
-    CT_IP4_S="$(conntrack -L -s "$PRIO_IP4" 2>/dev/null | grep -cE 'tcp|udp|icmp')"
-    CT_IP4_D="$(conntrack -L -d "$PRIO_IP4" 2>/dev/null | grep -cE 'tcp|udp|icmp')"
-    echo "  Active conntrack entries (IPv4 src=$PRIO_IP4_DISP): ${CT_IP4_S:-0}"
-    echo "  Active conntrack entries (IPv4 dst=$PRIO_IP4_DISP): ${CT_IP4_D:-0}"
-fi
-if [ -n "$PRIO_IP6" ]; then
-    PRIO_IP6_PREFIX="$(echo "$PRIO_IP6" | cut -d/ -f1 | sed 's/::$/:/')"
-    CT_IP6="$(conntrack -L -f ipv6 2>/dev/null | grep -E 'tcp|udp|icmp' | grep -c "$PRIO_IP6_PREFIX")"
-    echo "  Active conntrack entries (IPv6 prefix $PRIO_IP6_DISP): ${CT_IP6:-0}"
+if ! command -v conntrack >/dev/null 2>&1; then
+    echo "  (conntrack tool not installed — opkg install conntrack-tools to see connection counts)"
+else
+    if [ -n "$PRIO_IP4" ]; then
+        CT_IP4_S="$(conntrack -L -s "$PRIO_IP4" 2>/dev/null | grep -cE 'tcp|udp|icmp')"
+        CT_IP4_D="$(conntrack -L -d "$PRIO_IP4" 2>/dev/null | grep -cE 'tcp|udp|icmp')"
+        echo "  Active conntrack entries (IPv4 src=$PRIO_IP4_DISP): ${CT_IP4_S:-0}"
+        echo "  Active conntrack entries (IPv4 dst=$PRIO_IP4_DISP): ${CT_IP4_D:-0}"
+    fi
+    if [ -n "$PRIO_IP6" ]; then
+        PRIO_IP6_PREFIX="$(echo "$PRIO_IP6" | cut -d/ -f1 | sed 's/::$/:/')"
+        CT_IP6="$(conntrack -L -f ipv6 2>/dev/null | grep -E 'tcp|udp|icmp' | grep -c "$PRIO_IP6_PREFIX")"
+        echo "  Active conntrack entries (IPv6 prefix $PRIO_IP6_DISP): ${CT_IP6:-0}"
+    fi
 fi
 
 # ----------------------------------------------------------------------------
 print_section "19. ctinfo / kernel module status"
-echo "  ct_dscpremark module : $(grep -c '^xt_dscp\|^cls_ctinfo' /proc/modules 2>/dev/null) loaded matches"
+echo "  ct_dscpremark module : $(grep -cE '^(xt_dscp|cls_ctinfo)' /proc/modules 2>/dev/null) loaded matches"
 CTINFO_ENABLE="$(uci -q get sqm.@queue[0].ctinfo_enable)"
 echo "  UCI ctinfo_enable    : ${CTINFO_ENABLE:-0} (1=ON, 0=OFF)"
 
