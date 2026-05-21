@@ -1,5 +1,95 @@
 # Changelog
 
+## v1.6.1
+
+### Fixed (QoS / CAKE)
+
+- **Egress hash mode now correctly set to `dual-srchost`** in the default
+  `sqm.config`. The v1.5 changelog mistakenly claimed this fix had already
+  shipped — see Correction notice below.
+- Clearer error message when the CAKE qdisc is unavailable (kmod-sched-cake
+  missing).
+- SQM section detection now escapes `.` in interface names, avoiding false
+  matches on VLAN-style names like `eth1.2`.
+
+### Changed (QoS defaults)
+
+- **`rtt 1ms` removed from default `sqm.config` opts** — CAKE now auto-tunes
+  RTT (~100ms), which is the right choice for most home setups. Users with
+  short-path gaming LANs can re-add `rtt 1ms` to `iqdisc_opts` / `eqdisc_opts`
+  via LuCI's advanced qdisc options.
+
+### Improved (installer)
+
+- **Critical kernel modules now abort the install on failure** —
+  `kmod-sched-cake`, `kmod-ifb`, `kmod-sched-ctinfo`, `kmod-nf-conntrack`,
+  `kmod-nft-core`, `nftables`, `sqm-scripts`, `tc`/`tc-full`. Previously
+  the installer reported "completed successfully" even with broken core SQM.
+- **Keeping existing `/etc/config/sqm` now skips UCI pre-configuration** —
+  if you answer N to the overwrite prompt, the installer no longer forces
+  `enabled='1'` on your existing config. Select `Seg_Layer_Cake.qos`
+  manually in LuCI: Network → SQM QoS.
+- Disk space check is now robust to non-numeric `df` output (warns and
+  proceeds instead of silently bypassing the check).
+- Backup of existing `sqm.config` / `sqm.js` now compares against the custom
+  version first — if the existing file already is the custom, no `.orig`
+  is created (prevents clobbering a real `.orig` on re-install).
+- Final installer summary now reflects actual state (does not claim
+  "Active SQM script: Seg_Layer_Cake.qos" when the user kept their config).
+- Explicit `chmod 0755` on installed files instead of `chmod +x` (umask-safe).
+
+### Improved (uninstaller)
+
+- **Uninstall now removes the entire `/www/luci-static/resources/view/dscp/`
+  directory and uses a glob pattern `luci-app-dscp*.json`** in shared
+  directories — aligned with the installer's glob-based deployment.
+- `safe_rm` now reports the actual outcome (Removed / Failed / Not present)
+  instead of a misleading "Not found" message that never triggered.
+- Final summary now lists `/etc/config/sqm` (previously omitted).
+
+### Improved (LuCI UI)
+
+- **`gaming_ip` / `gaming_ip6` fields now validate input** — comma-separated
+  IPv4/IPv6 addresses, with optional CIDR. Typos no longer silently produce
+  broken nftables rules.
+- The IPv4 field description now mentions prefix (CIDR) support, matching
+  the IPv6 field and the underlying nftables behavior.
+
+### Security
+
+- **Conntrack flush button (RPC backend) now rejects overly broad CIDR masks**
+  — IPv4 < /24 and IPv6 < /64 are blocked. Previously `0.0.0.0/0` would
+  wipe the entire conntrack table.
+
+### Correction notice
+
+The v1.5 changelog "Fixed" section claimed `eqdisc_opts now uses dual-srchost`,
+but the actual code change to `sqm.config` was missing — both `v1.5` and
+`v1.6` tags ship with `dual-dsthost`. The fix has now correctly landed in
+v1.6.1.
+
+---
+
+## v1.6
+
+### Added
+
+- **Tier-aware DSCP dropdowns** — every value in the LuCI DSCP Policies tab
+  now displays its target CAKE tier (Voice / Video / Best Effort / Bulk)
+  directly in the option label, so users can pick values without memorizing
+  the diffserv4 mapping.
+- **AF41** option added to the browsing DSCP dropdown (Multimedia Conferencing,
+  Video tier, low-drop).
+- **DSCP Quick Reference** section in the README with CAKE tier mapping
+  table and recommended values per dropdown.
+
+### Improved
+
+- README rewritten with ctinfo behavior, UDP classification details, and
+  updated installation instructions.
+
+---
+
 ## v1.5
 
 ### Added
