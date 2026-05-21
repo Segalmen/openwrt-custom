@@ -77,7 +77,6 @@ return view.extend({
         s.tab('tab_qdisc',     _('Queue Discipline'));
         s.tab('tab_linklayer', _('Link Layer Adaptation'));
         s.tab('tab_dscp',      _('DSCP Policies'));
-		
 
         // ==================================================================
         // Helper: validate port lists (comma-separated ports and ranges)
@@ -130,6 +129,124 @@ return view.extend({
         };
 
         // ==================================================================
+        // Helper: validate comma-separated IPv4 list (with optional CIDR)
+        // ==================================================================
+        // Accepted: "192.168.1.100", "192.168.1.100,10.0.0.5", "192.168.1.0/24"
+        // Rejected: spaces, IPv6 syntax, malformed octets, mask out of range
+        var validateIPv4List = function(section_id, value) {
+            if (value == null || value === '')
+                return true;
+
+            if (/\s/.test(value))
+                return _('Spaces are not allowed. Use commas without spaces (e.g. "192.168.1.100,192.168.1.101").');
+
+            var parts = value.split(',');
+            for (var i = 0; i < parts.length; i++) {
+                var p = parts[i];
+                if (p === '')
+                    return _('Empty element in the list (double comma or trailing comma?).');
+
+                // Optional CIDR /mask
+                var addr = p;
+                if (p.indexOf('/') !== -1) {
+                    var sp = p.split('/');
+                    if (sp.length !== 2 || sp[0] === '' || sp[1] === '')
+                        return _('Invalid CIDR notation: "%s".').format(p);
+                    addr = sp[0];
+                    var mask = parseInt(sp[1], 10);
+                    if (isNaN(mask) || String(mask) !== sp[1] || mask < 0 || mask > 32)
+                        return _('Invalid IPv4 CIDR mask in "%s" (must be 0-32).').format(p);
+                }
+
+                // Dotted-quad: exactly 4 octets, each 0-255
+                var oct = addr.split('.');
+                if (oct.length !== 4)
+                    return _('Invalid IPv4 address: "%s".').format(p);
+                for (var j = 0; j < 4; j++) {
+                    if (!/^[0-9]{1,3}$/.test(oct[j]))
+                        return _('Invalid IPv4 octet in "%s".').format(p);
+                    var v = parseInt(oct[j], 10);
+                    if (v < 0 || v > 255)
+                        return _('IPv4 octet out of range (0-255) in "%s".').format(p);
+                }
+            }
+            return true;
+        };
+
+        // ==================================================================
+        // Helper: validate comma-separated IPv6 list (with optional prefix)
+        // ==================================================================
+        // Accepted: "fd00::1", "fd00::1,fd00::2", "fd00::/64", "::1", "2001:db8::"
+        // Rejected: spaces, IPv4 syntax, triple colon, multiple "::", mask out of range,
+        //           stray leading/trailing ":" without "::"
+        // Note: pragmatic validator — catches typos, not a full RFC4291 parser.
+        //       IPv4-embedded IPv6 (::ffff:1.2.3.4) and zone IDs (%eth0) are not supported.
+        var validateIPv6List = function(section_id, value) {
+            if (value == null || value === '')
+                return true;
+
+            if (/\s/.test(value))
+                return _('Spaces are not allowed. Use commas without spaces (e.g. "fd00::100,fd00::101").');
+
+            var parts = value.split(',');
+            for (var i = 0; i < parts.length; i++) {
+                var p = parts[i];
+                if (p === '')
+                    return _('Empty element in the list (double comma or trailing comma?).');
+
+                // Optional /prefix
+                var addr = p;
+                if (p.indexOf('/') !== -1) {
+                    var sp = p.split('/');
+                    if (sp.length !== 2 || sp[0] === '' || sp[1] === '')
+                        return _('Invalid IPv6 prefix notation: "%s".').format(p);
+                    addr = sp[0];
+                    var mask = parseInt(sp[1], 10);
+                    if (isNaN(mask) || String(mask) !== sp[1] || mask < 0 || mask > 128)
+                        return _('Invalid IPv6 prefix length in "%s" (must be 0-128).').format(p);
+                }
+
+                // IPv6 must contain at least one ':'
+                if (addr.indexOf(':') === -1)
+                    return _('Not an IPv6 address: "%s".').format(p);
+
+                // Triple colon never valid
+                if (addr.indexOf(':::') !== -1)
+                    return _('Invalid IPv6 (triple colon): "%s".').format(p);
+
+                // At most one "::" (zero compression)
+                var doubleColons = addr.split('::').length - 1;
+                if (doubleColons > 1)
+                    return _('Invalid IPv6 (multiple "::" not allowed): "%s".').format(p);
+
+                // Block count check using non-empty blocks
+                var blocks = addr.split(':');
+
+                // Reject stray leading/trailing colon when "::" is absent
+                if (doubleColons === 0 && (blocks[0] === '' || blocks[blocks.length - 1] === ''))
+                    return _('Invalid IPv6 (stray leading or trailing colon): "%s".').format(p);
+
+                var nonEmpty = 0;
+                for (var j = 0; j < blocks.length; j++) {
+                    if (blocks[j] !== '') nonEmpty++;
+                }
+                if (doubleColons === 1 && nonEmpty >= 8)
+                    return _('Invalid IPv6 (compression "::" replaces nothing): "%s".').format(p);
+                if (doubleColons === 0 && nonEmpty !== 8)
+                    return _('Invalid IPv6 (must have 8 blocks or use "::"): "%s".').format(p);
+
+                // Each non-empty block: 1-4 hex chars
+                for (var k = 0; k < blocks.length; k++) {
+                    var b = blocks[k];
+                    if (b === '') continue;
+                    if (!/^[0-9a-fA-F]{1,4}$/.test(b))
+                        return _('Invalid IPv6 block "%s" in "%s".').format(b, p);
+                }
+            }
+            return true;
+        };
+
+        // ==================================================================
         // Tab: DSCP Policies
         // ==================================================================
         // CAKE diffserv4 tier mapping reference (kernel sch_cake.c):
@@ -159,13 +276,15 @@ return view.extend({
             _('Priority device IPv4 address(es)'));
         o.placeholder = '192.168.1.100,192.168.1.101';
         o.rmempty     = true;
-        o.description = _('One or more IPv4 addresses of latency-sensitive devices ' +
+        o.validate    = validateIPv4List;
+        o.description = _('One or more IPv4 addresses or prefixes of latency-sensitive devices ' +
                           '(console, gaming PC, VoIP phone, workstation...), separated by commas.');
 
         o = s.taboption('tab_dscp', form.Value, 'gaming_ip6',
             _('Priority device IPv6 address(es) or prefix(es)'));
         o.placeholder = 'fd00::100,fd00::101';
         o.rmempty     = true;
+        o.validate    = validateIPv6List;
         o.description = _('One or more IPv6 addresses or prefixes of latency-sensitive devices, ' +
                           'separated by commas.');
 
@@ -264,8 +383,8 @@ return view.extend({
         o.description = _('DSCP value applied to ultra-small packets from priority devices. ' +
                           'CS6 is the standard choice — guarantees Voice tier without ' +
                           'reserved RFC4594 conflicts (CS7 is reserved for L2 control).');
-		
-		// ==== Micro / Small packet thresholds ====
+
+        // ==== Micro / Small packet thresholds ====
         o = s.taboption('tab_dscp', form.Value, 'micro_pkt_threshold',
             _('Micro-packet size threshold (bytes)'));
         o.placeholder = '60';
@@ -373,7 +492,6 @@ return view.extend({
         o.description = _('Automatically downgrade large HTTPS packets (&gt;1000 bytes) from ' +
                           'priority devices to the Bulk DSCP value. ' +
                           'Prevents big downloads from stealing bandwidth from real-time traffic.');
-						  
 
 
         // ==================================================================
