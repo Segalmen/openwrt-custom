@@ -179,13 +179,28 @@ local methods = {
 
             -- Basic safety: only accept IPv4/IPv6-looking patterns
             -- Reject anything with shell metacharacters to prevent injection
+            -- Reject overly broad CIDR masks to prevent mass-flush of conntrack
+            -- (e.g. 0.0.0.0/0 would wipe the entire conntrack table)
             local function safe_ip(s)
                 if type(s) ~= "string" then return "" end
                 -- Allow digits, dots, colons, slash (for CIDR), letters a-f (IPv6 hex)
-                if s:match("^[%da-fA-F%.%:%/]+$") then
-                    return s
+                if not s:match("^[%da-fA-F%.%:%/]+$") then
+                    return ""
                 end
-                return ""
+                -- If CIDR notation present, enforce minimum mask per family
+                -- Thresholds match "one LAN segment" — IPv4 /24, IPv6 /64
+                local mask = s:match("/(%d+)$")
+                if mask then
+                    local mask_n = tonumber(mask) or -1
+                    if s:find(":", 1, true) then
+                        -- IPv6: require /64 or stricter
+                        if mask_n < 64 or mask_n > 128 then return "" end
+                    else
+                        -- IPv4: require /24 or stricter
+                        if mask_n < 24 or mask_n > 32 then return "" end
+                    end
+                end
+                return s
             end
 
             ip4 = safe_ip(ip4)
