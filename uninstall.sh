@@ -48,16 +48,26 @@ do_run() {
     if [ "$DRY_RUN" = "1" ]; then
         printf "  [DRY-RUN] %s\n" "$*"
     else
-        eval "$@"
+        "$@"
     fi
 }
 
 safe_rm() {
     if [ "$DRY_RUN" = "1" ]; then
         printf "  [DRY-RUN] rm -f %s\n" "$*"
-    else
-        rm -f "$@" && ok "Removed: $*" || warn "Not found (skipped): $*"
+        return 0
     fi
+    for f in "$@"; do
+        if [ -e "$f" ] || [ -L "$f" ]; then
+            if rm -f "$f"; then
+                ok "Removed: $f"
+            else
+                warn "Failed to remove: $f"
+            fi
+        else
+            info "Not present (skipped): $f"
+        fi
+    done
 }
 
 # =============================================================================
@@ -175,18 +185,32 @@ fi
 # =============================================================================
 info "Step 5/7: Removing DSCP Connections view"
 
-safe_rm /www/luci-static/resources/view/dscp/connections.js
 safe_rm /usr/libexec/rpcd/luci.dscp
-safe_rm /usr/share/luci/menu.d/luci-app-dscp.json
-safe_rm /usr/share/rpcd/acl.d/luci-app-dscp.json
 
-# Remove dscp/ directory if empty
+# Glob removal — install.sh deploys via `for f in connections/{menu,acl}/*.json`
+# Convention: all DSCP-related files in these shared dirs must be prefixed
+# with `luci-app-dscp` so uninstall can find them.
+for f in /usr/share/luci/menu.d/luci-app-dscp*.json; do
+    [ -f "$f" ] && safe_rm "$f"
+done
+for f in /usr/share/rpcd/acl.d/luci-app-dscp*.json; do
+    [ -f "$f" ] && safe_rm "$f"
+done
+
+# Our own directory — install.sh deploys via `for f in connections/view/*.js`
+# rm -rf is safe here: we created the directory.
 if [ "$DRY_RUN" = "0" ]; then
-    rmdir /www/luci-static/resources/view/dscp 2>/dev/null && \
-        ok "dscp/ directory removed (was empty)" || \
-        warn "dscp/ directory not empty — kept"
+    if [ -d /www/luci-static/resources/view/dscp ]; then
+        if rm -rf /www/luci-static/resources/view/dscp; then
+            ok "dscp/ directory and contents removed"
+        else
+            warn "Failed to remove dscp/ directory"
+        fi
+    else
+        info "dscp/ directory not present — skipped"
+    fi
 else
-    info "[DRY-RUN] rmdir /www/luci-static/resources/view/dscp (if empty)"
+    info "[DRY-RUN] rm -rf /www/luci-static/resources/view/dscp"
 fi
 
 # =============================================================================
@@ -218,11 +242,12 @@ printf "${GRN}============================================================${RST}
 printf "\n"
 printf "  Files removed / restored:\n"
 printf "   - /usr/lib/sqm/Seg_Layer_Cake.qos\n"
+printf "   - /etc/config/sqm (restored or removed)\n"
 printf "   - /www/luci-static/resources/view/network/sqm.js (restored or removed)\n"
-printf "   - /www/luci-static/resources/view/dscp/connections.js\n"
+printf "   - /www/luci-static/resources/view/dscp/ (entire directory)\n"
 printf "   - /usr/libexec/rpcd/luci.dscp\n"
-printf "   - /usr/share/luci/menu.d/luci-app-dscp.json\n"
-printf "   - /usr/share/rpcd/acl.d/luci-app-dscp.json\n"
+printf "   - /usr/share/luci/menu.d/luci-app-dscp*.json\n"
+printf "   - /usr/share/rpcd/acl.d/luci-app-dscp*.json\n"
 printf "   - /root/dscp-validate.sh (diagnostic tool)\n"
 printf "\n"
 printf "  Installed packages (CAKE, nftables, conntrack-tools, etc.) are kept.\n"
