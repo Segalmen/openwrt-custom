@@ -49,16 +49,15 @@ make_nft_set() {
 
 # Convert DSCP name to conntrack mark value (with 0x80 valid flag)
 #
-# NOTE: This helper is currently UNUSED. The script stores DSCP→ctmark
-#       directly in nftables via `ct mark set ip dscp | 0x80` in both
-#       ctinfo ON and ctinfo OFF modes (see setup_nftables()).
+# RESERVED for future use — intentionally unused, do not remove.
 #
-# Kept as a reference/fallback utility for:
-#   - Future extensions that might need to set fixed ctmarks from shell
+# The script currently stores DSCP→ctmark directly in nftables via
+# `ct mark set ip dscp | 0x80` (see setup_nftables()) in both ctinfo
+# modes. This helper is kept for:
+#   - Future extensions that may need fixed ctmarks from shell
 #     (e.g. per-rule pre-computed ctmark instead of runtime bitwise OR)
 #   - Portability on older kernels/nftables where bitwise OR on ip dscp
-#     might behave differently (though this works fine on kernel 3.14+
-#     which covers all currently supported OpenWrt releases)
+#     could behave differently (kernel 3.14+ behaves correctly)
 #
 # Usage: ctmark=$(dscp_to_ctmark "cs4")  # returns "0xa0"
 dscp_to_ctmark() {
@@ -92,9 +91,10 @@ dscp_to_ctmark() {
 # SQM section detection — bound to $IFACE
 # =============================================================================
 detect_sqm_section() {
-    local _sec
+    local _sec _iface_re
+    _iface_re="$(printf '%s' "$IFACE" | sed 's/\./\\./g')"
     _sec="$(uci -q show sqm 2>/dev/null \
-        | sed -n "s/^\(sqm\.[^.]*\)\.interface='${IFACE}'$/\1/p" \
+        | sed -n "s/^\(sqm\.[^.]*\)\.interface='${_iface_re}'$/\1/p" \
         | head -n1)"
     [ -z "$_sec" ] && _sec="sqm.@queue[0]"
     echo "$_sec"
@@ -161,7 +161,6 @@ _load_uci_options() {
     export BROWSING_ENABLE BROWSING_DSCP BROWSING_TCP_PORTS BROWSING_UDP_PORTS
     export BULK_ENABLE BULK_DSCP
     export MICRO_PKT_ENABLE MICRO_PKT_DSCP BIG_HTTPS_DOWNGRADE
-	export MICRO_PKT_ENABLE MICRO_PKT_DSCP BIG_HTTPS_DOWNGRADE
     export MICRO_PKT_THRESHOLD SMALL_PKT_THRESHOLD
 }
 
@@ -739,7 +738,10 @@ cleanup_nftables() {
 sqm_prepare_script() {
     _load_uci_options
     do_modules
-    verify_qdisc "$QDISC" "cake" || return 1
+    if ! verify_qdisc "$QDISC" "cake"; then
+        sqm_error "CAKE qdisc unavailable — install kmod-sched-cake (opkg/apk install kmod-sched-cake)"
+        return 1
+    fi
     setup_nftables
 }
 
