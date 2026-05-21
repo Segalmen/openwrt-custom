@@ -126,9 +126,11 @@ All required dependencies are handled automatically by the installer.
 ## Requirements
 
 ### Supported system
-- OpenWrt **24.10 or newer**
-- Earlier versions may work but are **not supported nor tested**
-- OpenWrt **25.x** (apk-based) fully supported
+- OpenWrt **25.x** (apk) — fully supported, tested target.
+- OpenWrt **24.x** (opkg) — best-effort. The installer detects opkg and uses it,
+  but package names may have shifted on older trees; critical kernel modules
+  are validated at install time (the install aborts if any are missing).
+- Earlier versions are not supported.
 
 ### Required packages
 
@@ -326,24 +328,50 @@ sh install.sh --force     # Overwrite existing SQM config without confirmation
 ### The installer will
 
 - Check disk space and verify source files
-- Install required packages (non-blocking — continues on failure)
+- Install required packages — critical kmods (CAKE, IFB, ctinfo, nftables, ...)
+  abort the install on failure; non-critical packages warn and continue.
 - Copy all files to the correct locations
-- Back up existing `sqm.js` and `sqm.config` as `.orig`
+- Back up existing `sqm.js` and `sqm.config` as `.orig` (skipped if the
+  existing file is already the custom version).
 - Auto-detect WAN interface
-- Pre-configure SQM via UCI
+- Pre-configure SQM via UCI (skipped if you keep your existing config —
+  you'll need to select `Seg_Layer_Cake.qos` manually in LuCI).
 - Restart required services
 - Install the diagnostic tool to `/root/dscp-validate.sh`
 
 ### Upgrading from an earlier version
 
-Existing UCI configurations are fully compatible. The installer prompts
-before overwriting `/etc/config/sqm` — answer **N** to keep your current
-DSCP settings. The new tier-aware dropdowns will display your existing
-values correctly.
+Running `sh install.sh` on a system that already has an earlier version
+installed behaves as follows.
 
-To force a refresh of just the LuCI view files without touching your
-config, use `sh install.sh --force` (your `/etc/config/sqm` is still
-backed up as `.orig` first).
+**Code files are replaced unconditionally** — this is the point of the
+upgrade. The following files are overwritten without prompting:
+
+- `Seg_Layer_Cake.qos` (SQM script)
+- `sqm.js` (custom LuCI SQM view)
+- `luci.dscp` (rpcd backend)
+- LuCI menu / ACL JSON files
+- `dscp-validate.sh` (diagnostic tool)
+
+**Your configuration in `/etc/config/sqm` is preserved by default** — the
+installer prompts you before touching it:
+
+| Answer | `/etc/config/sqm` | UCI pre-config (interface, script, enabled) |
+|--------|-------------------|---------------------------------------------|
+| **Y** (overwrite) | replaced with shipped defaults | applied automatically |
+| **N** (keep)      | preserved as-is | **skipped** — select `Seg_Layer_Cake.qos` manually in LuCI |
+| `--force` flag    | replaced unconditionally (no prompt) | applied automatically |
+
+Existing UCI configurations remain fully compatible across versions —
+the tier-aware dropdowns display your existing DSCP values correctly
+regardless of which choice you make.
+
+**Backup behavior** — the installer creates `.orig` backups of
+`/etc/config/sqm` and `sqm.js` when an `.orig` is missing. The backup
+is **skipped if the existing file is already the custom version**
+(byte-identical to what we ship). This prevents a re-install from
+clobbering a real `.orig` (your original from before any install) with
+a copy of the custom file.
 
 ---
 
@@ -431,6 +459,11 @@ sh uninstall.sh --keep-config  # Keep /etc/config/sqm as-is
 
 ## Notes
 
+- Default qdisc opts no longer hardcode `rtt 1ms`. CAKE auto-tunes RTT
+  (≈100 ms), which is correct for most home setups. If you have a very
+  short LAN (e.g. gaming-only setup with sub-millisecond local paths),
+  you can re-add `rtt 1ms` to `iqdisc_opts` / `eqdisc_opts` via LuCI's
+  advanced qdisc options.
 - DSCP policy logic does not require manual DiffServ configuration in LuCI.
   CAKE automatically operates in DiffServ mode when using `Seg_Layer_Cake.qos`.
 - This project does not override existing firewall rules.
