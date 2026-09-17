@@ -148,7 +148,7 @@ The following packages are required for full functionality
 - `ip-full` – advanced IP tooling
 - `lua` – required for rpcd backend
 - `luci-lib-jsonc` – JSON handling for LuCI / rpcd
-- `conntrack-tools` – required for the Flush Conntrack button
+- `conntrack` – required for the Flush Conntrack button
 
 ### Permissions
 - Root access on the router is required

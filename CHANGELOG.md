@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.6.2]
+
+### Fixed
+- **Package name**: `conntrack-tools` replaced by `conntrack` in `REQUIRED_PKGS`.
+  `conntrack-tools` is the OpenWrt *source* package name and is not installable;
+  the binary packages it produces are `conntrack` and `conntrackd`. The install
+  silently reported a non-critical failure on every release since v1.6, leaving
+  the Flush Conntrack button without its backend.
+
+### Correction notice
+- v1.6 CHANGELOG stated "New required package: `conntrack-tools`". The correct
+  package name is `conntrack`.
+
 ## v1.6.1
 
 ### Fixed (QoS / CAKE)

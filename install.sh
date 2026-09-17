@@ -172,7 +172,7 @@ $PKG_TC
 ip-full
 lua
 luci-lib-jsonc
-conntrack-tools
+conntrack
 "
 
 # Critical packages — install MUST fail if any of these are missing.
