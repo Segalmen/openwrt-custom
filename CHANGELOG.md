@@ -1,5 +1,36 @@
 # Changelog
 
+## [1.7.0]
+
+### Removed
+- **Micro-packet / Small-packet rules and their options** (`micro_pkt_enable`,
+  `micro_pkt_dscp`, `micro_pkt_threshold`, `small_pkt_threshold`).
+  These rules matched the same devices and ports as Priority UDP/TCP but
+  excluded packets carrying the Priority DSCP, which the Priority rules had
+  just set, so they could never match. Verified on OpenWrt 25.12.5: 0 packets
+  after a full game session while Priority rules matched about 57,000.
+  Traffic handling is unchanged. Existing `micro_pkt_*` / `small_pkt_*`
+  options in `/etc/config/sqm` are ignored and can stay.
+
+### Fixed
+- **CAKE tier mapping** in README, LuCI labels and comments now matches the
+  kernel `diffserv4` table: CS4 and CS5 map to Voice (not Video), CS2 and CS3
+  to Video (not Best Effort), AF1x to Best Effort (not Bulk).
+- **ctinfo guidance**: keep ctinfo enabled in every topology, including double
+  NAT. Ingress traffic is redirected to the IFB before nftables prerouting
+  runs, so with ctinfo off only upload traffic is classified. Previous docs
+  recommended disabling ctinfo behind another NAT router.
+- Browsing "gaming-first" profile now recommends AF11 (Best Effort); the
+  previously recommended CS3 is in the Video tier.
+- `dscp-validate.sh`: per-tin stats show the busiest `cake_mq` queue instead
+  of the first one, which is often idle and displayed only zeros (tested on
+  simulated `cake_mq` output; plain CAKE output verified on hardware). Section
+  labels no longer hardcode default DSCP values.
+- Default Priority UDP DSCP aligned to the recommended CS4 (was EF in the
+  script and LuCI, CS5 in `sqm.config`). All three map to the Voice tier, so
+  traffic handling is unchanged.
+- README install URL updated to v1.7.0.
+
 ## [1.6.3]
 
 ### Fixed
