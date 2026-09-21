@@ -256,6 +256,12 @@ _build_dscp_rules() {
 
     # ------------------------------------------------------------------
     # 1. Priority UDP
+    #
+    # Each direction is matched on BOTH ports:
+    #   - local port  (sport up / dport down) → consoles, fixed local port
+    #   - remote port (dport up / sport down) → PC clients, ephemeral local
+    #     port, stable server port. Rules suffixed "srv".
+    # Same logic applies to Priority TCP below.
     # ------------------------------------------------------------------
     if [ "$PRIORITY_UDP_ENABLE" = "1" ] && [ -n "$PRIORITY_UDP_PORTS" ]; then
 
@@ -266,10 +272,22 @@ _build_dscp_rules() {
             comment "PrioUDPup4"
 
         nft add rule inet sqm_dscp "$_chain" \
+            ip saddr "$PRIORITY_IP_SET" \
+            udp dport { "$PRIORITY_UDP_PORTS" } \
+            counter ip dscp set "$PRIORITY_UDP_DSCP" \
+            comment "PrioUDPup4srv"
+
+        nft add rule inet sqm_dscp "$_chain" \
             ip daddr "$PRIORITY_IP_SET" \
             udp dport { "$PRIORITY_UDP_PORTS" } \
             counter ip dscp set "$PRIORITY_UDP_DSCP" \
             comment "PrioUDPdwn4"
+
+        nft add rule inet sqm_dscp "$_chain" \
+            ip daddr "$PRIORITY_IP_SET" \
+            udp sport { "$PRIORITY_UDP_PORTS" } \
+            counter ip dscp set "$PRIORITY_UDP_DSCP" \
+            comment "PrioUDPdwn4srv"
 
         nft add rule inet sqm_dscp "$_chain" \
             ip6 saddr "$PRIORITY_IP6_SET" \
@@ -278,10 +296,22 @@ _build_dscp_rules() {
             comment "PrioUDPup6"
 
         nft add rule inet sqm_dscp "$_chain" \
+            ip6 saddr "$PRIORITY_IP6_SET" \
+            udp dport { "$PRIORITY_UDP_PORTS" } \
+            counter ip6 dscp set "$PRIORITY_UDP_DSCP" \
+            comment "PrioUDPup6srv"
+
+        nft add rule inet sqm_dscp "$_chain" \
             ip6 daddr "$PRIORITY_IP6_SET" \
             udp dport { "$PRIORITY_UDP_PORTS" } \
             counter ip6 dscp set "$PRIORITY_UDP_DSCP" \
             comment "PrioUDPdwn6"
+
+        nft add rule inet sqm_dscp "$_chain" \
+            ip6 daddr "$PRIORITY_IP6_SET" \
+            udp sport { "$PRIORITY_UDP_PORTS" } \
+            counter ip6 dscp set "$PRIORITY_UDP_DSCP" \
+            comment "PrioUDPdwn6srv"
     fi
 
     # ------------------------------------------------------------------
@@ -296,10 +326,22 @@ _build_dscp_rules() {
             comment "PrioTCPup4"
 
         nft add rule inet sqm_dscp "$_chain" \
+            ip saddr "$PRIORITY_IP_SET" \
+            tcp dport { "$PRIORITY_TCP_PORTS" } \
+            counter ip dscp set "$PRIORITY_TCP_DSCP" \
+            comment "PrioTCPup4srv"
+
+        nft add rule inet sqm_dscp "$_chain" \
             ip daddr "$PRIORITY_IP_SET" \
             tcp dport { "$PRIORITY_TCP_PORTS" } \
             counter ip dscp set "$PRIORITY_TCP_DSCP" \
             comment "PrioTCPdwn4"
+
+        nft add rule inet sqm_dscp "$_chain" \
+            ip daddr "$PRIORITY_IP_SET" \
+            tcp sport { "$PRIORITY_TCP_PORTS" } \
+            counter ip dscp set "$PRIORITY_TCP_DSCP" \
+            comment "PrioTCPdwn4srv"
 
         nft add rule inet sqm_dscp "$_chain" \
             ip6 saddr "$PRIORITY_IP6_SET" \
@@ -308,10 +350,22 @@ _build_dscp_rules() {
             comment "PrioTCPup6"
 
         nft add rule inet sqm_dscp "$_chain" \
+            ip6 saddr "$PRIORITY_IP6_SET" \
+            tcp dport { "$PRIORITY_TCP_PORTS" } \
+            counter ip6 dscp set "$PRIORITY_TCP_DSCP" \
+            comment "PrioTCPup6srv"
+
+        nft add rule inet sqm_dscp "$_chain" \
             ip6 daddr "$PRIORITY_IP6_SET" \
             tcp dport { "$PRIORITY_TCP_PORTS" } \
             counter ip6 dscp set "$PRIORITY_TCP_DSCP" \
             comment "PrioTCPdwn6"
+
+        nft add rule inet sqm_dscp "$_chain" \
+            ip6 daddr "$PRIORITY_IP6_SET" \
+            tcp sport { "$PRIORITY_TCP_PORTS" } \
+            counter ip6 dscp set "$PRIORITY_TCP_DSCP" \
+            comment "PrioTCPdwn6srv"
     fi
 
     # ------------------------------------------------------------------

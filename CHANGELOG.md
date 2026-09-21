@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.6.3]
+
+### Fixed
+- **Priority UDP/TCP rules now also match the remote (server) port.**
+  Previous releases matched only the port on the priority device's side
+  (`sport` upload, `dport` download). Clients using an ephemeral local port
+  (observed with a PC game, Delta Force) were never classified, whatever the
+  configured port list. Each Priority rule now has a twin (comment suffix
+  `srv`) matching the server port. Clients with a fixed local port (consoles,
+  EA FC on PC) are unaffected. Verified on OpenWrt 25.12.5 (IPv4 UDP, both
+  directions).
+- README install URL pointed to v1.6.1.
+- `SHA256SUMS` regenerated from LF files; the previous file was generated from
+  CRLF checkouts and did not verify.
+
 ## [1.6.2]
 
 ### Fixed
