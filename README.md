@@ -10,7 +10,7 @@ This project provides:
 
 - A custom SQM script (`Seg_Layer_Cake.qos`)
 - nftables-based DSCP marking (IPv4 / IPv6)
-- Smart traffic classification with micro-packet boost and bulk downgrade
+- Traffic classification with priority rules and bulk downgrade
 - Download classification through kernel `ctinfo` DSCP restore
 - Automated installer with dependency handling
 - LuCI custom view with real-time DSCP Connections monitor
@@ -54,19 +54,6 @@ port (clients that use a random local port, common on PC).
 Mark TCP traffic from/to priority devices (optional), with the same
 local/remote port matching as Priority UDP.
 Useful for remote desktop, video conferencing signalling, etc.
-
-### Micro-Packet Priority
-Automatically boost very small packets (default: < 60 bytes) from priority
-devices to the highest CAKE tin. Ideal for gaming ACKs, VoIP signalling,
-TCP keepalives, STUN/ICE probes, and real-time control packets.
-Packets between the micro and small thresholds (default: 60–200 bytes)
-receive the Priority UDP DSCP value.
-
-Both thresholds are now **configurable** in DSCP Policies:
-- `micro_pkt_threshold` — default: 60 bytes, range 40–200
-- `small_pkt_threshold` — default: 200 bytes, range 100–500
-
-The micro-packet DSCP value is also configurable (CS6, CS7, EF, VA).
 
 ### Browsing Classification
 Optionally classify web browsing traffic (HTTP/HTTPS/QUIC) with a specific
@@ -118,7 +105,6 @@ with three recommended profiles:
 |----------|-------------|-----------|
 | Priority UDP | `CS4` | Voice tier, highest CAKE priority |
 | Priority TCP | `CS0` | Gaming TCP (auth, login) shouldn't compete with real-time UDP |
-| Micro-packet | `CS6` | Standard network control class |
 | Browsing | `AF21` (default) or `AF11` (gaming-first) | See profiles above |
 | Bulk | `CS1` | Classic background; `LEPHB` for the modern RFC8622 equivalent |
 
@@ -170,8 +156,6 @@ The following packages are required for full functionality
   - **ctinfo OFF** → prerouting rules, upload classification only
 - nftables-based DSCP marking (IPv4 / IPv6)
 - Separate **UDP and TCP priority classification**
-- **Configurable Micro-packet priority** (default: < 60 bytes → CS6/CS7/EF/VA)
-- **Configurable Small packet boost** (default: 60–200 bytes → Priority DSCP)
 - **Big HTTPS auto-downgrade** (> 1000 bytes → Bulk DSCP)
 - Optional **web browsing traffic classification** (CS0-only, non-destructive)
 - Optional **bulk traffic classification**
@@ -257,7 +241,7 @@ Conntrack) explicitly requires user confirmation.
 ## Diagnostic tool
 
 A standalone shell script is included to validate that all DSCP / SQM / CAKE
-policies are properly active. It produces a structured 19-section report
+policies are properly active. It produces a structured 15-section report
 showing rule counters, CAKE per-tin latency, conntrack health, and a final
 verdict.
 
@@ -284,15 +268,14 @@ verdict.
 5. Priority TCP rule counters
 6. Bulk TCP/UDP rule counters
 7. Big HTTPS auto-downgrade counters
-8. MicroPkt and SmallPkt UDP/TCP counters
-9. Browsing classification counters
-10. Conntrack ctmark storage stats
-11. CAKE qdisc summary (upload + download)
-12. CAKE per-tin latency (Bulk / Best Effort / Video / Voice)
-13. Total bytes shaped and packets dropped
-14. Active conntrack entries for the priority device
-15. ctinfo / kernel module status
-16. Quick health check verdict (gaming detected, web traffic classified)
+8. Browsing classification counters
+9. Conntrack ctmark storage stats
+10. CAKE qdisc summary (upload + download)
+11. CAKE per-tin latency (Bulk / Best Effort / Video / Voice)
+12. Total bytes shaped and packets dropped
+13. Active conntrack entries for the priority device
+14. ctinfo / kernel module status
+15. Quick health check verdict (gaming detected, web traffic classified)
 
 ### When to use it
 
@@ -389,7 +372,7 @@ After installation, configure SQM in LuCI:
    - Link layer adaptation / overhead
 3. Go to the **DSCP Policies** tab:
    - Enter your priority device IPv4/IPv6 addresses
-   - Enable and configure UDP/TCP priority, micro-packets, bulk, browsing
+   - Enable and configure UDP/TCP priority, bulk, browsing
    - See the [DSCP Quick Reference](#dscp-quick-reference) section above
      for guidance on choosing values
 4. Click **Save & Apply**

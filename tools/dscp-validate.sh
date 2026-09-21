@@ -171,31 +171,15 @@ print_section "8. Big HTTPS auto-downgrade (>1000 bytes → CS1)"
 print_rules "BigHTTPS" "Big HTTPS"
 
 # ----------------------------------------------------------------------------
-print_section "9. MicroPkt UDP rules (<150 bytes on gaming ports → CS6)"
-print_rules "MicroPktUDP" "MicroPkt UDP"
-
-# ----------------------------------------------------------------------------
-print_section "10. SmallPkt UDP rules (150-300 bytes on gaming ports → priority DSCP)"
-print_rules "SmallPktUDP" "SmallPkt UDP"
-
-# ----------------------------------------------------------------------------
-print_section "11. MicroPkt TCP rules"
-print_rules "MicroPktTCP" "MicroPkt TCP"
-
-# ----------------------------------------------------------------------------
-print_section "12. SmallPkt TCP rules"
-print_rules "SmallPktTCP" "SmallPkt TCP"
-
-# ----------------------------------------------------------------------------
-print_section "13. Browsing rules (CS0 web traffic → AF21)"
+print_section "9. Browsing rules (CS0 web traffic → AF21)"
 print_rules "Brows" "Browsing"
 
 # ----------------------------------------------------------------------------
-print_section "14. Conntrack mark storage (DSCP→ctmark)"
+print_section "10. Conntrack mark storage (DSCP→ctmark)"
 print_rules "Store" "Store ctmark"
 
 # ----------------------------------------------------------------------------
-print_section "15. CAKE qdisc summary"
+print_section "11. CAKE qdisc summary"
 echo ""
 echo "  >>> UPLOAD direction (dev $WAN_IF) <<<"
 if [ -n "$WAN_IF" ] && tc qdisc show dev "$WAN_IF" 2>/dev/null | grep -q cake; then
@@ -213,7 +197,7 @@ else
 fi
 
 # ----------------------------------------------------------------------------
-print_section "16. CAKE per-tin latency (Voice = gaming tin)"
+print_section "12. CAKE per-tin latency (Voice = gaming tin)"
 echo ""
 print_tin_summary() {
     dev="$1"
@@ -237,7 +221,7 @@ print_tin_summary "$WAN_IF" "UPLOAD"
 print_tin_summary "$IFB_IF" "DOWNLOAD"
 
 # ----------------------------------------------------------------------------
-print_section "17. Overall packet count summary"
+print_section "13. Overall packet count summary"
 SENT_UP="$(tc -s qdisc show dev "$WAN_IF" 2>/dev/null | awk '/Sent/ {print $2; exit}')"
 SENT_DOWN="$(tc -s qdisc show dev "$IFB_IF" 2>/dev/null | awk '/Sent/ {print $2; exit}')"
 DROP_UP="$(tc -s qdisc show dev "$WAN_IF" 2>/dev/null | sed -n 's/.*dropped \([0-9]*\).*/\1/p' | head -1)"
@@ -259,7 +243,7 @@ echo "  Upload   sent: $(hr_bytes "${SENT_UP:-0}")    dropped: ${DROP_UP:-0} pkt
 echo "  Download sent: $(hr_bytes "${SENT_DOWN:-0}")  dropped: ${DROP_DOWN:-0} pkts"
 
 # ----------------------------------------------------------------------------
-print_section "18. Conntrack statistics for priority device"
+print_section "14. Conntrack statistics for priority device"
 PRIO_IP4="$(uci -q get sqm.@queue[0].gaming_ip)"
 PRIO_IP6="$(uci -q get sqm.@queue[0].gaming_ip6)"
 
@@ -291,7 +275,7 @@ else
 fi
 
 # ----------------------------------------------------------------------------
-print_section "19. ctinfo / kernel module status"
+print_section "15. ctinfo / kernel module status"
 echo "  ct_dscpremark module : $(grep -cE '^(xt_dscp|cls_ctinfo)' /proc/modules 2>/dev/null) loaded matches"
 CTINFO_ENABLE="$(uci -q get sqm.@queue[0].ctinfo_enable)"
 echo "  UCI ctinfo_enable    : ${CTINFO_ENABLE:-0} (1=ON, 0=OFF)"

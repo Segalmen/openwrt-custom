@@ -362,55 +362,6 @@ return view.extend({
         o.validate    = validatePortList;
         o.description = _('Comma-separated TCP ports used by latency-sensitive applications.');
 
-        // ==== Micro-packet priority ====
-        o = s.taboption('tab_dscp', form.Flag, 'micro_pkt_enable',
-            _('Enable micro-packet priority'));
-        o.default     = '1';
-        o.rmempty     = false;
-        o.description = _('Automatically boost very small packets from priority devices to the ' +
-                          'highest CAKE tin. Ideal for TCP ACKs, UDP keepalives, VoIP signalling ' +
-                          'and real-time control packets. Default thresholds (configurable below) ' +
-                          'are tuned to NOT match modern gaming traffic. Packets in the small ' +
-                          'range get the Priority UDP DSCP value.');
-
-        o = s.taboption('tab_dscp', form.ListValue, 'micro_pkt_dscp',
-            _('Micro-packet DSCP'));
-        o.value('cs7', _('CS7 — Network control absolute (→ Voice tier, highest)'));
-        o.value('cs6', _('CS6 — Network control (→ Voice tier) ★ recommended'));
-        o.value('ef',  _('EF — Expedited Forwarding (→ Voice tier)'));
-        o.value('va',  _('VA — Voice Admit (→ Voice tier)'));
-        o.default     = 'cs6';
-        o.rmempty     = false;
-        o.depends('micro_pkt_enable', '1');
-        o.description = _('DSCP value applied to ultra-small packets from priority devices. ' +
-                          'CS6 is the standard choice — guarantees Voice tier without ' +
-                          'reserved RFC4594 conflicts (CS7 is reserved for L2 control).');
-
-        // ==== Micro / Small packet thresholds ====
-        o = s.taboption('tab_dscp', form.Value, 'micro_pkt_threshold',
-            _('Micro-packet size threshold (bytes)'));
-        o.placeholder = '60';
-        o.default     = '60';
-        o.rmempty     = true;
-        o.datatype    = 'and(uinteger,min(40),max(200))';
-        o.depends('micro_pkt_enable', '1');
-        o.description = _('Packets smaller than this size from priority devices are upgraded to ' +
-                          'the Micro-packet DSCP. Default 60 bytes captures pure control traffic ' +
-                          '(TCP ACKs, UDP keepalives) without affecting gaming flows. Modern FPS/sports ' +
-                          'games average 70-150 bytes/packet, so values above 60 may saturate the ' +
-                          'Voice tin codel under load. Range 40-200.');
-
-        o = s.taboption('tab_dscp', form.Value, 'small_pkt_threshold',
-            _('Small-packet size threshold (bytes)'));
-        o.placeholder = '200';
-        o.default     = '200';
-        o.rmempty     = true;
-        o.datatype    = 'and(uinteger,min(100),max(500))';
-        o.depends('micro_pkt_enable', '1');
-        o.description = _('Packets between Micro and this size are upgraded to the Priority UDP DSCP. ' +
-                          'Default 200 bytes captures small interactive packets like VoIP RTP. ' +
-                          'Must be greater than Micro threshold. Range 100-500.');
-
         // ==== Browsing ====
         o = s.taboption('tab_dscp', form.Flag, 'browsing_enable',
             _('Enable web browsing classification'));
