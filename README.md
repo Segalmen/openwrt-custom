@@ -11,7 +11,7 @@ This project provides:
 - A custom SQM script (`Seg_Layer_Cake.qos`)
 - nftables-based DSCP marking (IPv4 / IPv6)
 - Smart traffic classification with micro-packet boost and bulk downgrade
-- Dual-mode ingress pipeline (ctinfo kernel or nftables prerouting)
+- Download classification through kernel `ctinfo` DSCP restore
 - Automated installer with dependency handling
 - LuCI custom view with real-time DSCP Connections monitor
 - One-click conntrack flush button for the priority device
@@ -30,26 +30,29 @@ Recommended on routers with 2+ CPU cores for better throughput distribution.
 
 ### DSCP Restore via conntrack (ctinfo)
 Store DSCP into conntrack mark and restore it on ingress using the `ctinfo`
-kernel module. When enabled, all classification rules run in postrouting
-and the kernel handles ingress restore efficiently.
-When disabled, classification rules move to prerouting, marking download
-traffic **before** IFB redirection so CAKE sees the correct DSCP.
+kernel action. All classification rules run in postrouting, and the kernel
+restores the mark on download traffic before CAKE sees it.
 
-> **Double NAT / downstream router use case:**
-> If this router sits behind another NAT device (e.g. a secondary
-> router or access point), disable ctinfo. In this topology, ingress
-> reply packets arrive with the upstream WAN IP as destination —
-> not the LAN client IP — making postrouting IP-based rules ineffective.
-> With ctinfo OFF, prerouting rules fire before NAT translation,
-> where port-based classification (browsing, bulk) works correctly
-> across all LAN clients regardless of the NAT layer.
+> **Keep ctinfo enabled in every topology, including double NAT.**
+> On Linux, ingress traffic is redirected to the IFB (and shaped by CAKE)
+> *before* nftables prerouting runs, so download traffic can only be
+> classified through ctinfo. Verified on a router sitting behind another
+> OpenWrt router: download priority rules matched with ctinfo ON.
+>
+> With ctinfo OFF, rules move to prerouting and only **upload** traffic is
+> classified; download traffic reaches CAKE with the DSCP it arrived with.
 
 ### Priority UDP Classification
 Mark UDP traffic from/to priority devices on the specified ports with a
 configurable DSCP value. Suitable for gaming, VoIP, and real-time apps.
 
+The configured ports are matched on both sides of each flow: the local
+port (consoles and clients with a fixed local port) and the remote server
+port (clients that use a random local port, common on PC).
+
 ### Priority TCP Classification
-Mark TCP traffic from/to priority devices (optional).
+Mark TCP traffic from/to priority devices (optional), with the same
+local/remote port matching as Priority UDP.
 Useful for remote desktop, video conferencing signalling, etc.
 
 ### Micro-Packet Priority
@@ -90,20 +93,22 @@ memorizing the diffserv4 mapping.
 
 | CAKE Tier | DSCP values | Typical use |
 |-----------|-------------|-------------|
-| **Voice** (highest) | CS6, CS7, EF, VA | Network control, VoIP, gaming micro-packets |
-| **Video** | CS4, CS5, AF2x, AF3x, AF4x | Real-time interactive, multimedia, signaling |
-| **Best Effort** | CS0, CS2, CS3 | Default web, OAM, broadcast |
-| **Bulk** (lowest) | CS1, AF1x, LEPHB | Background, scavenger, bulk downloads |
+| **Voice** (highest) | CS4, CS5, CS6, CS7, EF, VA | Real-time interactive, gaming, VoIP, network control |
+| **Video** | CS2, CS3, AF2x, AF3x, AF4x | Multimedia, conferencing, streaming, OAM |
+| **Best Effort** | CS0, AF1x | Default traffic |
+| **Bulk** (lowest) | CS1, LEPHB | Background, scavenger, bulk downloads |
+
+Source: the `diffserv4` table in the Linux kernel (`net/sched/sch_cake.c`).
 
 ### Choosing the right value for browsing
 
-The `browsing_dscp` dropdown now spans all four tiers, with three
-recommended profiles:
+The `browsing_dscp` dropdown spans three tiers (Video, Best Effort, Bulk),
+with three recommended profiles:
 
-- **Gaming-first setup** → use `CS3` (browsing in Best Effort, keeps
-  Video tier reserved for real-time gaming)
-- **Browsing-priority setup** → use `AF21` (default, boosts web above
-  bulk downloads in Video tier)
+- **Gaming-first setup** → use `AF11` (browsing stays in Best Effort,
+  below the Video and Voice tiers)
+- **Browsing-priority setup** → use `AF21` (default, boosts web into the
+  Video tier, above Best Effort and Bulk)
 - **Strong deprioritization** → use `CS1` or `LEPHB` (browsing yields
   to everything in Bulk tier)
 
@@ -111,10 +116,10 @@ recommended profiles:
 
 | Dropdown | Recommended | Rationale |
 |----------|-------------|-----------|
-| Priority UDP | `CS4` | Isolates gaming in Video tier |
+| Priority UDP | `CS4` | Voice tier, highest CAKE priority |
 | Priority TCP | `CS0` | Gaming TCP (auth, login) shouldn't compete with real-time UDP |
 | Micro-packet | `CS6` | Standard network control class |
-| Browsing | `AF21` (default) or `CS3` (gaming-first) | See profiles above |
+| Browsing | `AF21` (default) or `AF11` (gaming-first) | See profiles above |
 | Bulk | `CS1` | Classic background; `LEPHB` for the modern RFC8622 equivalent |
 
 ---
@@ -161,8 +166,8 @@ The following packages are required for full functionality
 - CAKE queue discipline for upload and download
 - Optional **CAKE multi-queue (cake_mq)** support for multi-core hardware
 - Dual-mode ingress pipeline:
-  - **ctinfo ON** → postrouting rules + kernel ctinfo restore (efficient)
-  - **ctinfo OFF** → prerouting rules mark download before IFB redirect
+  - **ctinfo ON** → postrouting rules + kernel ctinfo restore (recommended, required for download)
+  - **ctinfo OFF** → prerouting rules, upload classification only
 - nftables-based DSCP marking (IPv4 / IPv6)
 - Separate **UDP and TCP priority classification**
 - **Configurable Micro-packet priority** (default: < 60 bytes → CS6/CS7/EF/VA)
@@ -203,19 +208,17 @@ CAKE diffserv classification
 
 ```
 nftables prerouting
-  → DSCP mark (download — before IFB redirect)
+  → DSCP mark (upload only)
 
 nftables postrouting
   → Store conntrack mark only
 
-tc ingress (simple redirect)
-  → CAKE diffserv classification
+tc ingress (simple redirect — runs before prerouting)
+  → CAKE sees download traffic with the DSCP it arrived with
 ```
-> Recommended when the router operates behind another NAT device.
-> Port-based rules (browsing, bulk) remain fully functional.
-> IP-based priority rules (gaming_ip) are not effective in this mode
-> for ingress traffic due to NAT address rewriting.
-Both modes result in correct CAKE DiffServ behaviour for all traffic directions.
+> Not recommended. Download traffic is redirected to the IFB before
+> nftables prerouting runs, so no rule can classify it. Use ctinfo ON
+> in every topology, including double NAT.
 
 ---
 
@@ -276,7 +279,7 @@ verdict.
 
 1. Detected WAN and IFB interfaces
 2. Full UCI SQM configuration snapshot
-3. nftables `sqm_dscp` table status and rule count (42 rules expected)
+3. nftables `sqm_dscp` table status and rule count (depends on enabled options)
 4. Priority UDP rule counters (per IPv4/IPv6 × upload/download)
 5. Priority TCP rule counters
 6. Bulk TCP/UDP rule counters

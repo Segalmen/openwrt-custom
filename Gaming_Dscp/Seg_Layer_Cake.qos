@@ -3,16 +3,17 @@
 # Seg_Layer_Cake.qos — Custom SQM script for OpenWrt
 # Based on layer_cake.qos / Cero3
 # - QDISC    : CAKE (with optional multi-queue via cake_mq)
-# - Egress   : DSCP marking via nftables postrouting (both modes)
+# - Egress   : DSCP marking via nftables (postrouting ON / prerouting OFF)
 # - Ingress  :
 #     ctinfo ON  → postrouting marks + store ctmark → tc ctinfo restores DSCP
-#     ctinfo OFF → prerouting marks BEFORE IFB redirect → tc simple redirect
+#     ctinfo OFF → tc simple redirect; download is NOT classified
+#                  (tc ingress / IFB runs before netfilter prerouting)
 #
-# Pipeline ctinfo ON :
+# Pipeline ctinfo ON (recommended, any topology incl. double NAT):
 #   postrouting (mark + store ctmark) → tc ctinfo restore → CAKE diffserv
 #
-# Pipeline ctinfo OFF :
-#   postrouting (store ctmark only) + prerouting (mark before IFB) → CAKE
+# Pipeline ctinfo OFF (upload classification only):
+#   prerouting (mark upload) + postrouting (store ctmark only) → CAKE
 # =============================================================================
 
 [ "${SQM_DEBUG_XTRACE:-0}" = "1" ] && set -x
@@ -227,7 +228,8 @@ ingress() {
             action ctinfo dscp 63 128 \
             mirred egress redirect dev "$DEV"
     else
-        # ctinfo OFF — prerouting marks DSCP before this redirect
+        # ctinfo OFF — plain redirect: download reaches CAKE with the DSCP
+        # it arrived with (tc ingress runs before nftables prerouting)
         $TC filter add dev "$IFACE" parent ffff: protocol all matchall \
             action mirred egress redirect dev "$DEV"
     fi
@@ -719,7 +721,8 @@ _build_dscp_rules() {
 #
 # ctinfo OFF :
 #   postrouting → store ctmark only
-#   prerouting  → all DSCP rules (marks download before IFB redirect)
+#   prerouting  → all DSCP rules (effective on upload only: download is
+#                 redirected to IFB before prerouting runs)
 # =============================================================================
 setup_nftables() {
     nft delete table inet sqm_dscp >/dev/null 2>&1 || true
@@ -760,7 +763,8 @@ NFTEOF
 
     else
         # ----------------------------------------------------------------
-        # ctinfo OFF — rules in prerouting, marks download before IFB
+        # ctinfo OFF — rules in prerouting (upload only; download is
+        # redirected to IFB before prerouting runs)
         # postrouting only stores ctmark for connection tracking
         # ----------------------------------------------------------------
         _build_dscp_rules "prerouting"
