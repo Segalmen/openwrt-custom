@@ -151,27 +151,27 @@ print_rules() {
 }
 
 # ----------------------------------------------------------------------------
-print_section "4. Priority UDP rules (gaming traffic → CS4 by default)"
+print_section "4. Priority UDP rules (priority devices → Priority UDP DSCP)"
 print_rules "PrioUDP" "Priority UDP"
 
 # ----------------------------------------------------------------------------
-print_section "5. Priority TCP rules (gaming traffic → AF41 by default)"
+print_section "5. Priority TCP rules (priority devices → Priority TCP DSCP)"
 print_rules "PrioTCP" "Priority TCP"
 
 # ----------------------------------------------------------------------------
-print_section "6. Bulk TCP rules (web/HTTPS → CS1)"
+print_section "6. Bulk TCP rules (web/HTTPS → Bulk DSCP)"
 print_rules "BulkTCP" "Bulk TCP"
 
 # ----------------------------------------------------------------------------
-print_section "7. Bulk UDP rules (UDP web → CS1)"
+print_section "7. Bulk UDP rules (UDP web → Bulk DSCP)"
 print_rules "BulkUDP" "Bulk UDP"
 
 # ----------------------------------------------------------------------------
-print_section "8. Big HTTPS auto-downgrade (>1000 bytes → CS1)"
+print_section "8. Big HTTPS auto-downgrade (>1000 bytes → Bulk DSCP)"
 print_rules "BigHTTPS" "Big HTTPS"
 
 # ----------------------------------------------------------------------------
-print_section "9. Browsing rules (CS0 web traffic → AF21)"
+print_section "9. Browsing rules (CS0 web traffic → Browsing DSCP)"
 print_rules "Brows" "Browsing"
 
 # ----------------------------------------------------------------------------
@@ -197,7 +197,7 @@ else
 fi
 
 # ----------------------------------------------------------------------------
-print_section "12. CAKE per-tin latency (Voice = gaming tin)"
+print_section "12. CAKE per-tin latency (Voice tin = CS4, CS5, CS6, CS7, EF, VA)"
 echo ""
 print_tin_summary() {
     dev="$1"
@@ -206,13 +206,28 @@ print_tin_summary() {
         return
     fi
     echo "  >>> $direction ($dev) <<<"
-    # Take only the first qdisc block for clarity (one CPU thread shows the pattern)
+    # With cake_mq, each hardware queue runs its own CAKE instance with its own
+    # tin table, and most of them can be idle. Show the busiest instance
+    # (highest packet count). With plain CAKE there is only one instance.
     tc -s qdisc show dev "$dev" 2>/dev/null | awk '
-        /Bulk  Best Effort/ {found=1; print "    " $0; next}
-        found && /^[[:space:]]+(thresh|target|interval|pk_delay|av_delay|backlog|pkts|bytes|drops|marks|max_len)/ {
-            print "    " $0
-            count++
-            if (count >= 11) exit
+        /^qdisc / { n++; iscake[n] = ($2 == "cake"); rows[n] = 0; next }
+        n && /^[[:space:]]+Sent [0-9]+ bytes [0-9]+ pkt/ { if (!(n in pk)) pk[n] = $4 + 0; next }
+        n && iscake[n] && /Bulk  Best Effort/ { hdr[n] = $0; next }
+        n && (n in hdr) && rows[n] < 11 && /^[[:space:]]+(thresh|target|interval|pk_delay|av_delay|backlog|pkts|bytes|drops|marks|max_len)[[:space:]]/ {
+            tab[n] = tab[n] "    " $0 "\n"; rows[n]++; next
+        }
+        END {
+            best = 0; cnt = 0
+            for (i = 1; i <= n; i++) {
+                if (iscake[i] && (i in hdr)) {
+                    cnt++
+                    if (!best || pk[i] > pk[best]) best = i
+                }
+            }
+            if (!best) exit
+            if (cnt > 1) printf "    (cake_mq: busiest of %d queues, %d pkts)\n", cnt, pk[best]
+            print "    " hdr[best]
+            printf "%s", tab[best]
         }
     '
     echo ""

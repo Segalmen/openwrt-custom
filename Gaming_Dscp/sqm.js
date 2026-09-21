@@ -313,7 +313,7 @@ return view.extend({
         o.value('cs3',  _('CS3 — Broadcast (→ Video tier)'));
         o.value('cs2',  _('CS2 — OAM (→ Video tier)'));
         o.value('cs0',  _('CS0 — Default (→ Best Effort tier)'));
-        o.default     = 'ef';
+        o.default     = 'cs4';
         o.rmempty     = false;
         o.depends('priority_udp_enable', '1');
         o.description = _('DSCP value applied to matched UDP traffic. ' +
