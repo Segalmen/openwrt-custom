@@ -521,11 +521,13 @@ NFTEOF
 
         # Store DSCP into ctmark — read by tc ctinfo on ingress
         nft add rule inet sqm_dscp postrouting \
+            oifname "$IFACE" \
             ip protocol != { icmp } \
             ct mark set ip dscp or 0x80 \
             counter comment "StoreIPv4ctmark"
 
         nft add rule inet sqm_dscp postrouting \
+            oifname "$IFACE" \
             ip6 nexthdr != { icmpv6 } \
             ct mark set ip6 dscp or 0x80 \
             counter comment "StoreIPv6ctmark"
@@ -542,11 +544,13 @@ NFTEOF
 
         # Store ctmark in postrouting — tracks connections for future packets
         nft add rule inet sqm_dscp postrouting \
+            oifname "$IFACE" \
             ip protocol != { icmp } \
             ct mark set ip dscp or 0x80 \
             counter comment "StoreIPv4ctmark"
 
         nft add rule inet sqm_dscp postrouting \
+            oifname "$IFACE" \
             ip6 nexthdr != { icmpv6 } \
             ct mark set ip6 dscp or 0x80 \
             counter comment "StoreIPv6ctmark"
