@@ -1,5 +1,21 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **Config lost on re-install.** The installer only ever wrote
+  `/etc/config/sqm.orig`, and only when no `.orig` existed, so a second
+  install overwrote a customised config with no backup and no message.
+  The active config is now copied to `/etc/config/sqm.bak-<date>-<time>`
+  before every overwrite, and the overwrite is skipped if that copy fails.
+  `.orig` keeps its role unchanged: written once, restored by `uninstall.sh`.
+  Reproduced on OpenWrt 25.12.4 / RB5009 with v1.7.0.
+- **ctinfo mark storage was not limited to the WAN.** `StoreIPv4ctmark` and
+  `StoreIPv6ctmark` had no interface condition, so download traffic on its
+  way to the LAN could overwrite the mark stored for the upload direction,
+  moving a single flow between CAKE tins. Both rules, in the ctinfo ON and
+  ctinfo OFF branches, now match `oifname "$IFACE"`.
+
 ## [1.7.0]
 
 ### Removed

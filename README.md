@@ -318,7 +318,8 @@ sh install.sh --force     # Overwrite existing SQM config without confirmation
   abort the install on failure; non-critical packages warn and continue.
 - Copy all files to the correct locations
 - Back up existing `sqm.js` and `sqm.config` as `.orig` (skipped if the
-  existing file is already the custom version).
+  existing file is already the custom version), and back up the active
+  `/etc/config/sqm` as `sqm.bak-<date>-<time>` on every overwrite.
 - Auto-detect WAN interface
 - Pre-configure SQM via UCI (skipped if you keep your existing config —
   you'll need to select `Seg_Layer_Cake.qos` manually in LuCI).
@@ -352,12 +353,20 @@ Existing UCI configurations remain fully compatible across versions —
 the tier-aware dropdowns display your existing DSCP values correctly
 regardless of which choice you make.
 
-**Backup behavior** — the installer creates `.orig` backups of
-`/etc/config/sqm` and `sqm.js` when an `.orig` is missing. The backup
-is **skipped if the existing file is already the custom version**
-(byte-identical to what we ship). This prevents a re-install from
-clobbering a real `.orig` (your original from before any install) with
-a copy of the custom file.
+**Backup behavior** — two distinct backups protect your SQM config.
+
+`/etc/config/sqm.orig` and `sqm.js.orig` are written **once**, when no
+`.orig` exists yet. They hold your setup from before any install and are
+what `uninstall.sh` restores. The backup is **skipped if the existing file
+is already the custom version** (byte-identical to what we ship), so a
+re-install never clobbers a real `.orig` with a copy of the custom file.
+
+`/etc/config/sqm.bak-<date>-<time>` is written on **every** overwrite of the
+active config, unless that exact config is already saved — as `.orig`, or as
+the most recent `sqm.bak-`. Updating an install therefore keeps your
+customised bandwidth, ports and priority addresses in a dated file next to
+the config. These files are never removed automatically, not even by
+`uninstall.sh` — delete them yourself once you no longer need them.
 
 ---
 
@@ -455,7 +464,8 @@ sh uninstall.sh --keep-config  # Keep /etc/config/sqm as-is
 - This project does not override existing firewall rules.
 - nftables rules are created and removed dynamically on SQM start/stop.
 - The nftables table `sqm_dscp` is fully managed by the SQM lifecycle.
-- Original files are backed up as `.orig` during installation.
+- Original files are backed up as `.orig` during installation, and the
+  active SQM config as `sqm.bak-<date>-<time>` on every overwrite.
 - Compatible with Lua 5.1 (OpenWrt rpcd environment).
 - The Flush Conntrack button reads the priority device IPs from UCI at
   page load — change the IPs in DSCP Policies and reload the page to use
