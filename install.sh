@@ -267,6 +267,38 @@ do_run mkdir -p /etc/config
 
 SQM_CFG_REPLACED=0
 
+# Back up the ACTIVE config before overwriting it. Unlike .orig (written once,
+# at first install, and restored by uninstall.sh), this runs on EVERY overwrite
+# so an update never discards a user-customised config.
+backup_active_sqm() {
+    [ -f /etc/config/sqm ] || return 0
+
+    # Skip when the active config is already saved: either as .orig (first
+    # install) or as the most recent .bak- (nothing changed since). Comparing
+    # against the shipped sqm.config would never match, since install.sh
+    # rewrites interface/enabled/script via UCI right after copying it.
+    if [ -f /etc/config/sqm.orig ] && cmp -s /etc/config/sqm /etc/config/sqm.orig; then
+        info "Active SQM config already saved as /etc/config/sqm.orig — no backup needed"
+        return 0
+    fi
+
+    _last=""
+    for _f in /etc/config/sqm.bak-*; do
+        [ -f "$_f" ] && _last="$_f"
+    done
+    if [ -n "$_last" ] && cmp -s /etc/config/sqm "$_last"; then
+        info "Active SQM config unchanged since $_last — no backup needed"
+        return 0
+    fi
+    _bak="/etc/config/sqm.bak-$(date +%Y%m%d-%H%M%S)"
+    if cp /etc/config/sqm "$_bak"; then
+        ok "Active SQM config backed up → $_bak"
+    else
+        warn "Could not back up active SQM config — aborting overwrite"
+        return 1
+    fi
+}
+
 if [ "$DRY_RUN" = "0" ]; then
     if [ -f /etc/config/sqm ] && [ ! -f /etc/config/sqm.orig ]; then
         if cmp -s /etc/config/sqm Gaming_Dscp/sqm.config; then
@@ -283,17 +315,25 @@ if [ "$DRY_RUN" = "0" ]; then
         read -r REPLY
         case "$REPLY" in
             [oOyY])
-                info "Replacing SQM config"
-                cp Gaming_Dscp/sqm.config /etc/config/sqm
-                SQM_CFG_REPLACED=1
+                if backup_active_sqm; then
+                    info "Replacing SQM config"
+                    cp Gaming_Dscp/sqm.config /etc/config/sqm
+                    SQM_CFG_REPLACED=1
+                else
+                    warn "SQM config kept — backup failed"
+                fi
                 ;;
             *)
                 warn "SQM config kept — you will need to select Seg_Layer_Cake.qos manually in LuCI"
                 ;;
         esac
     else
-        cp Gaming_Dscp/sqm.config /etc/config/sqm
-        SQM_CFG_REPLACED=1
+        if backup_active_sqm; then
+            cp Gaming_Dscp/sqm.config /etc/config/sqm
+            SQM_CFG_REPLACED=1
+        else
+            warn "SQM config kept — backup failed"
+        fi
     fi
 else
     info "[DRY-RUN] Copy Gaming_Dscp/sqm.config → /etc/config/sqm"
