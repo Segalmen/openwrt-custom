@@ -216,10 +216,14 @@ This project also installs a **real-time DSCP Connections view** in LuCI.
 - Live conntrack-based connection monitoring
 - IPv4 and IPv6 visibility
 - Source / Destination IP + Port (with full IPv6 tooltip)
-- DSCP class decoding (CS0–CS7, AFxx, EF) with colour coding:
-  - 🔴 Red — high priority (CS5, CS6, CS7, EF)
-  - 🔵 Teal — medium priority (CS3, CS4, AF3x, AF4x)
-  - 🟡 Gold — default / low priority (CS0, CS1, CS2)
+- DSCP class decoding (CS0–CS7, AFxx, EF, VA, LE) coloured by CAKE tin, as
+  mapped by `diffserv4` — the mode shipped in `sqm.config`:
+  - 🔴 Red — Voice tin (CS4, CS5, CS6, CS7, EF, VA)
+  - 🔵 Teal — Video tin (CS2, CS3, AF2x, AF3x, AF4x)
+  - 🟡 Gold — Best Effort tin (CS0, AF1x, anything unlisted)
+  - ⚪ Grey — Bulk tin (CS1, LE)
+
+  On `diffserv3` or `diffserv8` these colours no longer match the tins.
 - Real-time PPS / BPS statistics with moving average
 - **Adaptive polling** — adjusts interval (1–10s) based on router load
 - **Pause / Resume** button to freeze the view for analysis

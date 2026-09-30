@@ -3,6 +3,12 @@
 ## [Unreleased]
 
 ### Changed
+- **Connections view colours now follow the CAKE tins.** They previously
+  showed a generic DSCP hierarchy: CS4 appeared as medium priority although
+  diffserv4 puts it in the Voice tin, and CS2/AF2x appeared as low priority
+  although they sit in the Video tin. Bulk traffic (CS1, LE) now has its own
+  grey instead of looking like ordinary traffic, and VA and LE are decoded
+  rather than shown as raw numbers.
 - **`priority_udp_dscp` now defaults to `ef` instead of `cs4`.** Measured on
   the bench and confirmed against the kernel tables in `sch_cake.c`: on
   diffserv3 — the sqm-scripts default — CS4 lands in Best Effort, so priority
