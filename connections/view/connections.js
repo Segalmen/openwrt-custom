@@ -1,6 +1,5 @@
 'use strict';
 'require view';
-'require poll';
 'require rpc';
 'require ui';
 'require uci';
@@ -149,9 +148,9 @@ function updateHistory(hist, inPkts, outPkts, inBytes, outBytes, timeDiff) {
 
 // =============================================================================
 // Adaptive polling
-// Mesure le temps de réponse rpcd et ajuste l'intervalle automatiquement :
-//   > 2000ms réponse → ralentit jusqu'à 10s max
-//   < 1000ms réponse → accélère jusqu'à 1s min
+// Measures the rpcd response time and adjusts the interval automatically:
+//   response > 2000ms → slow down, up to 10s
+//   response < 1000ms → speed up, down to 1s
 // =============================================================================
 function adaptivePoll(self) {
     if (!self.autoRefresh) return;
@@ -161,7 +160,7 @@ function adaptivePoll(self) {
     callGetConntrackDSCP().then(function(result) {
         var responseTime = Date.now() - startTime;
 
-        // Premier poll : démarre à 3s pour laisser le temps au système
+        // First poll: start at 3s to give the system some slack
         if (!self.hasPolledOnce) {
             self.pollInterval = 3;
             self.hasPolledOnce = true;
@@ -171,7 +170,7 @@ function adaptivePoll(self) {
             self.pollInterval = Math.max(self.pollInterval - 1, 1);
         }
 
-        // Mise à jour affichage intervalle
+        // Refresh the interval display
         var pollDisplay = document.getElementById('dscp_poll_interval');
         if (pollDisplay) {
             pollDisplay.textContent = _('Polling: ') + self.pollInterval + 's';
@@ -215,7 +214,7 @@ return view.extend({
     hasPolledOnce:     false,
 
     // ------------------------------------------------------------------
-    // load() — données initiales
+    // load() — initial data
     // ------------------------------------------------------------------
 load: function() {
         return Promise.all([
@@ -238,7 +237,7 @@ render: function(data) {
             ? Object.values(connectionsData.connections)
             : [];
 
-        // --- Filtre ---
+        // --- Filter ---
         var filterInput = E('input', {
             type:        'text',
             placeholder: _('Filter: IP, port, protocol, DSCP — multiple terms with spaces (AND logic)'),
@@ -250,7 +249,7 @@ render: function(data) {
             self.renderRows(Object.values(self.lastData));
         });
 
-        // --- Bouton tri DSCP ---
+        // --- Sort-by-DSCP button ---
         var dscpBtn = E('button', {
             class: 'cbi-button cbi-button-add',
             style: 'margin-right:8px;',
@@ -261,7 +260,7 @@ render: function(data) {
             }
         }, _('Sort by DSCP (active first)'));
 
-        // --- Bouton Pause / Resume ---
+        // --- Pause / Resume button ---
         var pauseBtn = E('button', {
             class: 'cbi-button cbi-button-neutral',
             style: 'margin-right:8px;'
@@ -293,19 +292,19 @@ render: function(data) {
             return E('option', { value: 'zoom-' + z }, z + '%');
         }));
 
-        // --- Compteur de connexions ---
+        // --- Connection counter ---
         var connCount = E('span', {
             id:    'dscp_conn_count',
             style: 'font-weight:bold; margin-left:12px; line-height:2.5em;'
         }, _('Connections: 0'));
 
-        // --- Affichage intervalle de poll ---
+        // --- Poll interval display ---
         var pollDisplay = E('span', {
             id:    'dscp_poll_interval',
             style: 'margin-left:12px; color:#888; font-size:0.85em;'
         }, _('Polling: 3s'));
 
-        // --- Colonnes de la table ---
+        // --- Table columns ---
         var cols = [
             { key: 'protocol', label: _('Protocol')           },
             { key: 'src',      label: _('Source & Port')      },
@@ -373,7 +372,7 @@ render: function(data) {
         // --- Flush Conntrack handler ---
         var handleFlush = function() {
             if (!priorityIp4 && !priorityIp6) {
-                ui.addNotification(null, E("p", _("No priority IP configured. Set gaming_ip in SQM first.")), "warning");
+                ui.addNotification(null, E("p", _("No priority device configured. Set it in Network → SQM QoS → DSCP Policies first.")), "warning");
                 return;
             }
 
@@ -407,7 +406,7 @@ render: function(data) {
             click: handleFlush
         }, _("Flush Conntrack"));
 
-        // Rendu initial + démarrage polling adaptatif
+        // Initial render, then start adaptive polling
         self.renderRows(initialConns);
         adaptivePoll(self);
 
@@ -436,7 +435,7 @@ render: function(data) {
     },
 
     // ------------------------------------------------------------------
-    // _showError() — message d'erreur dans la table
+    // _showError() — error message inside the table
     // ------------------------------------------------------------------
     _showError: function(msg) {
         var table = this.tableEl;
@@ -452,7 +451,7 @@ render: function(data) {
     },
 
     // ------------------------------------------------------------------
-    // renderRows() — reconstruction du corps de la table
+    // renderRows() — rebuild the table body
     // ------------------------------------------------------------------
     renderRows: function(conns) {
         var self  = this;
@@ -512,17 +511,17 @@ render: function(data) {
                 }
             });
 
-            // Tri
+            // Sort
             var sorted = conns.slice().sort(function(a, b) {
                 return self._sortValue(a, b);
             });
 
-            // Filtre multi-termes (ET entre termes, OU entre champs)
+            // Multi-term filter (AND between terms, OR between fields)
             var tokens = self.filter
                 ? self.filter.split(/\s+/).filter(Boolean)
                 : [];
 
-            // Reconstruction du tbody
+            // Rebuild the tbody
             while (table.rows.length > 1) table.deleteRow(1);
 
             var displayed = 0;
@@ -536,7 +535,7 @@ render: function(data) {
                 var proto   = (conn.protocol || '').toUpperCase();
                 var s       = conn._stats;
 
-                // Application du filtre
+                // Apply the filter
                 if (tokens.length > 0) {
                     var fields = [
                         proto.toLowerCase(),
@@ -585,7 +584,7 @@ render: function(data) {
                 ]));
             });
 
-            // Compteur — affiche "X / Y total" quand un filtre est actif
+            // Counter — shows "X / Y total" while a filter is active
             var countEl = document.getElementById('dscp_conn_count');
             if (countEl) {
                 countEl.textContent = tokens.length
@@ -602,7 +601,7 @@ render: function(data) {
     },
 
     // ------------------------------------------------------------------
-    // Comparateur de tri
+    // Sort comparator
     // ------------------------------------------------------------------
     _sortValue: function(a, b) {
         var col  = this.sortColumn;
@@ -645,7 +644,7 @@ render: function(data) {
     },
 
     // ------------------------------------------------------------------
-    // Indicateurs de tri visuels
+    // Visual sort indicators
     // ------------------------------------------------------------------
     _updateSortIndicators: function() {
         var col  = this.sortColumn;

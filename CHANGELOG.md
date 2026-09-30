@@ -3,12 +3,22 @@
 ## [Unreleased]
 
 ### Changed
+- **The Connections view kept showing connections that were already closed.**
+  Every poll added entries to an internal cache that was never pruned. The
+  live table was unaffected, but filtering or sorting rebuilds it from that
+  cache, so those actions listed flows that had ended — the longer the page
+  stayed open, the more of them. Entries absent from a poll are now dropped,
+  along with their statistics history.
 - **The validator no longer warns when Bulk is working as designed.** Its
   verdict counted `BulkTCP` alone, but since 1.8.0 the shipped Bulk ports are
   `80,8080`: plain HTTP, which barely exists. Deprioritization now happens
   through Big HTTPS on 443, so the check counted zero and warned on a healthy
   setup. Both rules now share one verdict. Section labels no longer describe
   the Bulk rules as covering HTTPS, and the gaming wording is gone.
+- **Connections view housekeeping.** The unused `poll` module is no longer
+  required, the remaining French comments are in English like the rest of the
+  project, and the Flush warning points at the LuCI field instead of naming
+  the `gaming_ip` UCI option.
 - **README sections follow the rule order too.** Browsing was described before
   Bulk, six lines below a table announcing the opposite order, and the new
   per-use-case port list sat between the two Priority sections. Both are now in
