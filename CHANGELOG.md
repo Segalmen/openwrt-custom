@@ -10,6 +10,12 @@
   shows it in LuCI. Makes forum support reports unambiguous.
 
 ### Fixed
+- **Connections view reported DSCP for marks that carry none.** The backend
+  read the low six bits of every conntrack mark as a DSCP class, although both
+  branches of its valid-flag test returned the same value. A mark set by
+  anything else — mwan3, a custom firewall rule — was therefore displayed as a
+  DSCP class the packet never had. It now reports CS0 unless bit 0x80 is set,
+  the same condition the kernel applies on ingress (`action ctinfo dscp 63 128`).
 - **Validator section 11 showed an arbitrary cake_mq queue.** It printed the
   first five lines of `tc -s qdisc show`, so under cake_mq it detailed
   whichever child instance came first — usually an idle one, and never the

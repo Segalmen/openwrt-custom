@@ -66,11 +66,14 @@ local function parse_connection(line)
     -- DSCP: stored in conntrack mark bits [5:0] (lower 6 bits)
     -- Bit 7 (0x80) is the "valid" flag set by our nftables rules
     local raw_mark = tonumber(line:match("mark=(%d+)") or "0") or 0
-    -- Only report DSCP if the valid flag is set, otherwise 0
+    -- Only report DSCP when the valid flag is set. Marks set by anything else
+    -- (mwan3, custom firewall rules) would otherwise be read as a DSCP class
+    -- and shown as one. The kernel applies the same rule on ingress:
+    -- `action ctinfo dscp 63 128` restores nothing without bit 0x80.
     if math.floor(raw_mark / 128) % 2 ~= 0 then
         conn.dscp = raw_mark % 64
     else
-        conn.dscp = raw_mark % 64
+        conn.dscp = 0
     end
 
     conn.use = tonumber(line:match("use=(%d+)") or "0") or 0
