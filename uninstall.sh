@@ -256,7 +256,11 @@ printf "  Timestamped backups /etc/config/sqm.bak-* are kept — remove them\n"
 printf "  yourself if you no longer need them.\n"
 printf "\n"
 printf "  Installed packages (CAKE, nftables, conntrack, etc.) are kept.\n"
-printf "  Use opkg/apk remove if you wish to remove them.\n"
+if command -v apk >/dev/null 2>&1; then
+    printf "  Use 'apk del <package>' if you wish to remove them.\n"
+else
+    printf "  Use 'opkg remove <package>' if you wish to remove them.\n"
+fi
 printf "\n"
 printf "  System restored to a clean OpenWrt state.\n"
 printf "\n"
