@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.8.1] — 2026-09-30
 
 ### Fixed
 - **An invalid DSCP from UCI silently disabled a whole policy.** LuCI only
