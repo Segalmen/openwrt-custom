@@ -1,5 +1,16 @@
 # Changelog
 
+## [Unreleased]
+
+### Fixed
+- **Browsing TCP ports placeholder matched no shipped default.** LuCI
+  suggested `80,8080,443,853` while `sqm.config` ships `80,8080,443`; 853
+  (DNS-over-TLS) appears nowhere else in the project. Copying the placeholder
+  silently changed what the rule matched.
+- **`dscp_to_ctmark()` was missing VA and LE.** The helper is kept for future
+  use and its table now covers every class the rest of the project knows:
+  `va` → `0xac`, `le` / `lephb` → `0x81`.
+
 ## [1.8.0] — 2026-09-30
 
 ### Added
