@@ -464,7 +464,12 @@ render: function(data) {
             var timeDiff = now - (self.lastUpdateTime || now);
             self.lastUpdateTime = now;
 
-            // Calcul stats par connexion
+            // Closed connections must not survive: renderRows() is also called
+            // from the filter box and the sort headers with Object.values(lastData),
+            // so anything kept here would still be listed long after it is gone.
+            var seen = {};
+
+            // Per-connection statistics
             conns.forEach(function(conn) {
                 var key = conn.layer3 + ':' + conn.protocol + ':' +
                           conn.src    + ':' + (conn.sport || '-') + ':' +
@@ -497,6 +502,14 @@ render: function(data) {
                     avgInBps:0, avgOutBps:0
                 };
                 self.lastData[key] = conn;
+                seen[key] = true;
+            });
+
+            Object.keys(self.lastData).forEach(function(key) {
+                if (!seen[key]) {
+                    delete self.lastData[key];
+                    delete self.connectionHistory[key];
+                }
             });
 
             // Tri
