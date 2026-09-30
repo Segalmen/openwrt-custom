@@ -568,7 +568,12 @@ cleanup_nftables() {
 # SQM lifecycle hooks
 # =============================================================================
 
+# Version recorded by install.sh; "unknown" when installed by hand
+SLC_VERSION="$(cat /usr/lib/sqm/Seg_Layer_Cake.version 2>/dev/null)"
+SLC_VERSION="${SLC_VERSION:-unknown}"
+
 sqm_prepare_script() {
+    logger -t SQM "Seg_Layer_Cake.qos v${SLC_VERSION} starting on ${IFACE}"
     _load_uci_options
     do_modules
     if ! verify_qdisc "$QDISC" "cake"; then

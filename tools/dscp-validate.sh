@@ -21,6 +21,9 @@
 # Force C locale for predictable numeric/text parsing (awk/sed/printf)
 export LC_ALL=C
 
+# Version recorded by install.sh
+SLC_VERSION="$(cat /usr/lib/sqm/Seg_Layer_Cake.version 2>/dev/null)"
+
 # Parse command-line arguments
 ANONYMIZE=0
 for arg in "$@"; do
@@ -54,6 +57,7 @@ print_header() {
     echo "===================================================================="
     echo "  Date         : $DATE_STR"
     echo "  Host         : $HOSTNAME_STR"
+    echo "  Version      : v${SLC_VERSION:-unknown}"
     echo "  OpenWrt      : ${OPENWRT_VER:-unknown}"
     echo "  Kernel       : $KERNEL_STR"
     if [ "$ANONYMIZE" = "1" ]; then

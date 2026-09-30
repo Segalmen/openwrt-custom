@@ -157,6 +157,7 @@ fi
 info "Step 3/7: Removing SQM script Seg_Layer_Cake.qos"
 
 safe_rm /usr/lib/sqm/Seg_Layer_Cake.qos
+safe_rm /usr/lib/sqm/Seg_Layer_Cake.version
 
 # =============================================================================
 # Step 4: Restore or remove SQM configuration
@@ -242,6 +243,7 @@ printf "${GRN}============================================================${RST}
 printf "\n"
 printf "  Files removed / restored:\n"
 printf "   - /usr/lib/sqm/Seg_Layer_Cake.qos\n"
+printf "   - /usr/lib/sqm/Seg_Layer_Cake.version\n"
 printf "   - /etc/config/sqm (restored or removed)\n"
 printf "   - /www/luci-static/resources/view/network/sqm.js (restored or removed)\n"
 printf "   - /www/luci-static/resources/view/dscp/ (entire directory)\n"

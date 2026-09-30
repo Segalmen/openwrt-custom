@@ -19,6 +19,11 @@ info() { printf "${BLU}[*]${RST}  %s\n"  "$*"; }
 warn() { printf "${YEL}[!]${RST}  %s\n"  "$*"; }
 err()  { printf "${RED}[ERROR]${RST} %s\n" "$*" >&2; }
 
+# --- Version (single source of truth: the VERSION file in this repo) ---
+VERSION="$(cat VERSION 2>/dev/null)"
+VERSION="${VERSION:-unknown}"
+VERSION_FILE="/usr/lib/sqm/Seg_Layer_Cake.version"
+
 # =============================================================================
 # Options
 # =============================================================================
@@ -342,13 +347,20 @@ fi
 # =============================================================================
 # Install: SQM script .qos
 # =============================================================================
-info "Installing SQM script Seg_Layer_Cake.qos"
+info "Installing SQM script Seg_Layer_Cake.qos (v$VERSION)"
 
 do_run mkdir -p /usr/lib/sqm
 do_run cp Gaming_Dscp/Seg_Layer_Cake.qos /usr/lib/sqm/Seg_Layer_Cake.qos
 do_run chmod 0755 /usr/lib/sqm/Seg_Layer_Cake.qos
 
 ok "Seg_Layer_Cake.qos installed"
+
+if [ "$DRY_RUN" = "0" ]; then
+    printf '%s\n' "$VERSION" > "$VERSION_FILE"
+    ok "Version $VERSION recorded → $VERSION_FILE"
+else
+    info "[DRY-RUN] echo $VERSION > $VERSION_FILE"
+fi
 
 # =============================================================================
 # Install: custom LuCI SQM view (sqm.js)
@@ -481,6 +493,7 @@ printf "${GRN}  Installation completed successfully${RST}\n"
 printf "${GRN}============================================================${RST}\n"
 printf "\n"
 if [ "$SQM_CFG_REPLACED" = "1" ] || [ "$DRY_RUN" = "1" ]; then
+    printf "  Installed version        : v%s\n" "$VERSION"
     printf "  Configured WAN interface: %s\n" "$WAN_IFACE"
     printf "  Active SQM script        : Seg_Layer_Cake.qos\n"
 else

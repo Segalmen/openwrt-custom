@@ -40,13 +40,15 @@ return view.extend({
                 }, this)),
                 []
             ),
-            uci.load('sqm')
+            uci.load('sqm'),
+            L.resolveDefault(fs.read('/usr/lib/sqm/Seg_Layer_Cake.version'), null)
         ]);
     },
 
     render: function(data) {
         var qdiscs  = data[0];
         var scripts = data[1];
+        var slcVersion = data[3] ? String(data[3]).trim() : null;
 
         if (qdiscs.length === 0) {
             ui.addNotification(null, E('div', { class: 'left' }, [
@@ -254,6 +256,14 @@ return view.extend({
         //   Video tier:           CS2, CS3, AF2x, AF3x, AF4x
         //   Best Effort tier:     CS0, AF1x
         //   Bulk tier (lowest):   CS1, LEPHB
+
+        // --- Installed version (written by install.sh) ---
+        if (slcVersion) {
+            o = s.taboption('tab_dscp', form.DummyValue, '_slc_version', ' ');
+            o.rawhtml = true;
+            o.default = '<span style="color:#00CED1; font-weight:bold;">%s</span>'
+                .format('Seg_Layer_Cake v' + slcVersion);
+        }
 
         // --- Multi-queue ---
         o = s.taboption('tab_dscp', form.Flag, 'enable_mq',

@@ -2,6 +2,9 @@
     "luci-app-dscp": {
         "description": "Grant access to DSCP Connections view",
         "read": {
+            "file": {
+                "/usr/lib/sqm/Seg_Layer_Cake.version": [ "read" ]
+            },
             "ubus": {
                 "luci.dscp": [ "getConntrackDSCP" ]
             }
