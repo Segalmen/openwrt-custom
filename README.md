@@ -73,6 +73,26 @@ The configured ports are matched on both sides of each flow: the local
 port (consoles and clients with a fixed local port) and the remote server
 port (clients that use a random local port, common on PC).
 
+### Common ports per use case
+
+The shipped lists target gaming. For other latency-sensitive uses, add the
+ports below to the Priority lists — the option names say *gaming* for
+historical reasons, nothing in the rules is gaming-specific.
+
+| Use case | Ports |
+|----------|-------|
+| Consoles and PC games | UDP `3074`, `3478-3480`, `3659`, often somewhere in `10000-45000` |
+| Remote desktop (RDP) | TCP `3389` |
+| WireGuard | UDP `51820` |
+| OpenVPN | UDP `1194` (can fall back to TCP, or to 443) |
+| IPsec / IKEv2 | UDP `500` (key exchange), `4500` (NAT traversal) |
+| Teams, Zoom media | UDP `3478-3481`, `50000-50059` |
+
+Two things worth knowing. A VPN tunnel is a **single flow** for CAKE, so
+everything inside it — a video call and a file download alike — gets the class
+you set for it. And the shipped UDP list stops at `3480`, so Teams screen
+sharing on `3481` is not covered unless you add it.
+
 ### Priority TCP Classification
 Mark TCP traffic from/to priority devices (optional), with the same
 local/remote port matching as Priority UDP.

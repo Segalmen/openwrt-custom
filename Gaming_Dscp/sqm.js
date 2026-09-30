@@ -341,7 +341,12 @@ return view.extend({
         o.rmempty     = true;
         o.depends('priority_udp_enable', '1');
         o.validate    = validatePortList;
-        o.description = _('Comma-separated ports or ranges used by latency-sensitive UDP applications.');
+        o.description = _('Comma-separated ports or ranges used by latency-sensitive UDP applications. ' +
+                          'Common values: consoles and PC games 3074, 3478-3480, 3659 and the wide ' +
+                          '10000-45000 range many titles pick from; WireGuard 51820; OpenVPN 1194; ' +
+                          'IPsec/IKEv2 500 and 4500; Teams and Zoom media 3478-3481 plus ' +
+                          '50000-50059. A VPN tunnel is a single flow for CAKE, so everything ' +
+                          'inside it gets the class you set here, downloads included.');
 
         // ==== TCP ====
         o = s.taboption('tab_dscp', form.Flag, 'priority_tcp_enable',
@@ -378,7 +383,10 @@ return view.extend({
         o.rmempty     = true;
         o.depends('priority_tcp_enable', '1');
         o.validate    = validatePortList;
-        o.description = _('Comma-separated TCP ports used by latency-sensitive applications.');
+        o.description = _('Comma-separated TCP ports used by latency-sensitive applications. ' +
+                          'Common values: remote desktop 3389; game login and session ports such ' +
+                          'as 3074 and 3659. Bulk TCP (patch downloads, cloud sync) does not ' +
+                          'belong here — see the Bulk rule below.');
 
         // ==== Browsing ====
         o = s.taboption('tab_dscp', form.Flag, 'browsing_enable',

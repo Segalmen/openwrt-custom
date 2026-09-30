@@ -1,5 +1,15 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+- **Port fields now say which ports to use.** The Priority UDP and TCP
+  descriptions listed no example beyond the shipped gaming defaults, leaving
+  anyone setting up remote desktop, a VPN or video conferencing to guess. They
+  now name the usual ports for each, and the README gained a table per use
+  case. Also noted: a VPN tunnel is a single flow for CAKE, so everything
+  inside it takes the class set for that tunnel.
+
 ## [1.8.1] — 2026-09-30
 
 ### Fixed
