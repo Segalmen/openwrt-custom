@@ -10,6 +10,16 @@
   shows it in LuCI. Makes forum support reports unambiguous.
 
 ### Changed
+- **`priority_tcp_dscp` now defaults to `cs0` everywhere.** The script used
+  `af41`, `sqm.config` shipped `cs4` and the README recommended `CS0`: three
+  different tiers for the same option. CS0 wins, as the README already argued —
+  gaming TCP (login, auth, patch traffic) should not compete with real-time
+  UDP. AF41 remains one click away for remote desktop or video conferencing.
+- **Updating no longer resets the shaper bandwidth.** When the config being
+  replaced was already ours, `install.sh` now reapplies its `download` and
+  `upload` values after the overwrite. On a first install it warns, in plain
+  words, that SQM is running at the example rates of `sqm.config` and that
+  they must be set in LuCI.
 - **Bulk classification has its own port lists.** It reused
   `browsing_tcp_ports` / `browsing_udp_ports`, so enabling Bulk sent every web
   port of a priority device — 443 included — to the Bulk tier, and Big HTTPS
