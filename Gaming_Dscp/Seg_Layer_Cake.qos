@@ -107,7 +107,7 @@ SQM_SECTION="$(detect_sqm_section)"
 # Load all UCI options — exported for sub-functions
 # =============================================================================
 _load_uci_options() {
-    ENABLE_MQ="$(uci_get "$SQM_SECTION" enable_mq 1)"
+    ENABLE_MQ="$(uci_get "$SQM_SECTION" enable_mq 0)"
     CTINFO_ENABLE="$(uci_get "$SQM_SECTION" ctinfo_enable 1)"
 
     PRIORITY_IP_RAW="$(uci_get "$SQM_SECTION" gaming_ip '192.168.1.100')"

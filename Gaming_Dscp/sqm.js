@@ -258,10 +258,12 @@ return view.extend({
         // --- Multi-queue ---
         o = s.taboption('tab_dscp', form.Flag, 'enable_mq',
             _('Enable Multi-Queue (cake_mq)'));
-        o.default     = '1';
+        o.default     = '0';
         o.rmempty     = false;
         o.description = _('Use cake_mq for multi-core hardware or NIC queue support. ' +
-                          'Recommended on routers with 2+ CPU cores.');
+                          'Off by default: without system tuning (one queue per core, ' +
+                          'RPS off on the WAN, irqbalance) it can perform worse than ' +
+                          'plain cake. Same default as sqm-scripts since 1.7.2.');
 
         // --- ctinfo ---
         o = s.taboption('tab_dscp', form.Flag, 'ctinfo_enable',
