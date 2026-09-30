@@ -26,6 +26,7 @@ var callFlushConntrack = rpc.declare({
 // =============================================================================
 var DSCP_MAP = {
     0:  'CS0',
+    1:  'LE',
     8:  'CS1',
     10: 'AF11', 12: 'AF12', 14: 'AF13',
     16: 'CS2',
@@ -35,6 +36,7 @@ var DSCP_MAP = {
     32: 'CS4',
     34: 'AF41', 36: 'AF42', 38: 'AF43',
     40: 'CS5',
+    44: 'VA',
     46: 'EF',
     48: 'CS6',
     56: 'CS7'
@@ -46,17 +48,23 @@ function dscpToString(mark) {
 }
 
 // =============================================================================
-// DSCP colour coding
-// Rouge  = haute priorité  (CS5, CS6, CS7, EF)
-// Teal   = priorité moyenne (CS3, CS4, AFx1-AFx3)
-// Or     = défaut / basse  (tout le reste)
+// DSCP colour coding — one colour per CAKE tin, as mapped by diffserv4
+// (the mode shipped in sqm.config). Kernel table: sch_cake.c, diffserv4[].
+// Red    = Voice tin       (CS4, CS5, CS6, CS7, EF, VA)
+// Teal   = Video tin       (CS2, CS3, AF2x, AF3x, AF4x)
+// Gold   = Best Effort tin (CS0, AF1x, anything unlisted)
+// Grey   = Bulk tin        (CS1, LE)
+// Note: on diffserv3 or diffserv8 these colours no longer match the tins.
 // =============================================================================
 function getDscpColor(dscpName) {
     var name = String(dscpName).toUpperCase();
-    if (['CS5', 'CS6', 'CS7', 'EF'].indexOf(name) !== -1)
+    if (['CS4', 'CS5', 'CS6', 'CS7', 'EF', 'VA'].indexOf(name) !== -1)
         return '#FF4500';
-    if (['CS3', 'CS4', 'AF31', 'AF32', 'AF33', 'AF41', 'AF42', 'AF43'].indexOf(name) !== -1)
+    if (['CS2', 'CS3', 'AF21', 'AF22', 'AF23',
+         'AF31', 'AF32', 'AF33', 'AF41', 'AF42', 'AF43'].indexOf(name) !== -1)
         return '#00CED1';
+    if (['CS1', 'LE'].indexOf(name) !== -1)
+        return '#9E9E9E';
     return '#FFD700';
 }
 
