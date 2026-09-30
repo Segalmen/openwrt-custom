@@ -272,6 +272,18 @@ do_run mkdir -p /etc/config
 
 SQM_CFG_REPLACED=0
 
+# Bandwidth of the config being replaced, when it was already ours. Reapplied
+# after the overwrite so an update never drops the user back to the example
+# rates shipped in sqm.config.
+PREV_DOWNLOAD=""
+PREV_UPLOAD=""
+if [ "$DRY_RUN" = "0" ] && [ -f /etc/config/sqm ]; then
+    if [ "$(uci -q get sqm.@queue[0].script)" = "Seg_Layer_Cake.qos" ]; then
+        PREV_DOWNLOAD="$(uci -q get sqm.@queue[0].download)"
+        PREV_UPLOAD="$(uci -q get sqm.@queue[0].upload)"
+    fi
+fi
+
 # Back up the ACTIVE config before overwriting it. Unlike .orig (written once,
 # at first install, and restored by uninstall.sh), this runs on EVERY overwrite
 # so an update never discards a user-customised config.
@@ -451,6 +463,16 @@ if [ "$DRY_RUN" = "0" ] && [ "$SQM_CFG_REPLACED" = "1" ]; then
     uci set sqm.@queue[0].interface="$WAN_IFACE"
     uci set sqm.@queue[0].enabled='1'
     uci set sqm.@queue[0].script='Seg_Layer_Cake.qos'
+
+    if [ -n "$PREV_DOWNLOAD" ] && [ -n "$PREV_UPLOAD" ]; then
+        uci set sqm.@queue[0].download="$PREV_DOWNLOAD"
+        uci set sqm.@queue[0].upload="$PREV_UPLOAD"
+        ok "Bandwidth kept from the previous install: ${PREV_DOWNLOAD}/${PREV_UPLOAD} Kbps"
+    else
+        warn "SQM will start at the example rates of sqm.config (100000/20000 Kbps)."
+        warn "→ Set your measured rates in LuCI: Network → SQM QoS → Basic Settings"
+    fi
+
     uci commit sqm
     ok "SQM UCI configuration applied"
 elif [ "$DRY_RUN" = "0" ]; then
