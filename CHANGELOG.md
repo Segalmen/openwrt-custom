@@ -9,6 +9,14 @@
   `dscp-validate.sh` prints it in the report header, and the DSCP Policies tab
   shows it in LuCI. Makes forum support reports unambiguous.
 
+### Fixed
+- **Stray `Command failed: Not found` during installation.** Installing after
+  an uninstall left SQM stopped, and the installer called `restart` regardless:
+  procd printed that message from the stop half. The installer now checks
+  whether a cake qdisc is present on the WAN interface and calls `start` or
+  `restart` accordingly. `/etc/init.d/sqm running` cannot be used for this —
+  SQM is not a procd daemon, so it always reports false.
+
 ### Changed
 - **`priority_tcp_dscp` now defaults to `cs0` everywhere.** The script used
   `af41`, `sqm.config` shipped `cs4` and the README recommended `CS0`: three

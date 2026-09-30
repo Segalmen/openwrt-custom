@@ -491,10 +491,24 @@ info "Restarting services"
 if [ "$DRY_RUN" = "0" ]; then
     if [ -x /etc/init.d/sqm ]; then
         /etc/init.d/sqm enable
-        if /etc/init.d/sqm restart; then
-            ok "SQM service restarted"
+
+        # SQM is not a procd daemon, so `/etc/init.d/sqm running` always
+        # reports false; test the qdisc instead. Calling `restart` while
+        # stopped makes procd print "Command failed: Not found" from the
+        # stop half of the restart, which happens on any install following
+        # an uninstall.
+        if tc qdisc show dev "$WAN_IFACE" 2>/dev/null | grep -q cake; then
+            if /etc/init.d/sqm restart; then
+                ok "SQM service restarted"
+            else
+                warn "SQM did not start correctly — check bandwidth settings in LuCI"
+            fi
         else
-            warn "SQM did not start correctly — check bandwidth settings in LuCI"
+            if /etc/init.d/sqm start; then
+                ok "SQM service started"
+            else
+                warn "SQM did not start correctly — check bandwidth settings in LuCI"
+            fi
         fi
     fi
 
