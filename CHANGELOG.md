@@ -3,6 +3,12 @@
 ## [Unreleased]
 
 ### Fixed
+- **An invalid DSCP from UCI silently disabled a whole policy.** LuCI only
+  offers valid classes, but a value set from the command line, a restored
+  config or a hand-edited file went straight to nftables, which rejected the
+  rule — leaving the policy unset while SQM still reported a successful start.
+  Unknown values now fall back to the shipped default and say so in the system
+  log. Validation reuses `dscp_to_ctmark()`, until now kept unused.
 - **Browsing TCP ports placeholder matched no shipped default.** LuCI
   suggested `80,8080,443,853` while `sqm.config` ships `80,8080,443`; 853
   (DNS-over-TLS) appears nowhere else in the project. Copying the placeholder
