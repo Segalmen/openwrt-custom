@@ -120,11 +120,10 @@ fi
 
 # ----------------------------------------------------------------------------
 # Helper: list rules matching a comment pattern, formatted with packets/bytes
-# Usage: print_rules <pattern> <label>
+# Usage: print_rules <pattern>
 # ----------------------------------------------------------------------------
 print_rules() {
     pattern="$1"
-    label="$2"
     matches="$(nft list table inet sqm_dscp 2>/dev/null | grep -E "comment.*$pattern")"
     if [ -z "$matches" ]; then
         echo "  (no rules found for pattern: $pattern)"
@@ -152,31 +151,31 @@ print_rules() {
 
 # ----------------------------------------------------------------------------
 print_section "4. Priority UDP rules (priority devices → Priority UDP DSCP)"
-print_rules "PrioUDP" "Priority UDP"
+print_rules "PrioUDP"
 
 # ----------------------------------------------------------------------------
 print_section "5. Priority TCP rules (priority devices → Priority TCP DSCP)"
-print_rules "PrioTCP" "Priority TCP"
+print_rules "PrioTCP"
 
 # ----------------------------------------------------------------------------
 print_section "6. Bulk TCP rules (web/HTTPS → Bulk DSCP)"
-print_rules "BulkTCP" "Bulk TCP"
+print_rules "BulkTCP"
 
 # ----------------------------------------------------------------------------
 print_section "7. Bulk UDP rules (UDP web → Bulk DSCP)"
-print_rules "BulkUDP" "Bulk UDP"
+print_rules "BulkUDP"
 
 # ----------------------------------------------------------------------------
 print_section "8. Big HTTPS auto-downgrade (>1000 bytes → Bulk DSCP)"
-print_rules "BigHTTPS" "Big HTTPS"
+print_rules "BigHTTPS"
 
 # ----------------------------------------------------------------------------
 print_section "9. Browsing rules (CS0 web traffic → Browsing DSCP)"
-print_rules "Brows" "Browsing"
+print_rules "Brows"
 
 # ----------------------------------------------------------------------------
 print_section "10. Conntrack mark storage (DSCP→ctmark)"
-print_rules "Store" "Store ctmark"
+print_rules "Store"
 
 # ----------------------------------------------------------------------------
 print_section "11. CAKE qdisc summary"
