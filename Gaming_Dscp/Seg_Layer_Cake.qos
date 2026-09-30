@@ -72,6 +72,8 @@ dscp_to_ctmark() {
         cs6)  echo "0xb0" ;;
         cs7)  echo "0xb8" ;;
         ef)   echo "0xae" ;;
+        va)   echo "0xac" ;;
+        le|lephb) echo "0x81" ;;
         af11) echo "0x8a" ;;
         af12) echo "0x8c" ;;
         af13) echo "0x8e" ;;
