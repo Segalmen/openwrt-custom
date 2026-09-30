@@ -10,6 +10,15 @@
   shows it in LuCI. Makes forum support reports unambiguous.
 
 ### Changed
+- **Bulk classification has its own port lists.** It reused
+  `browsing_tcp_ports` / `browsing_udp_ports`, so enabling Bulk sent every web
+  port of a priority device — 443 included — to the Bulk tier, and Big HTTPS
+  Auto-Downgrade could never match anything the Bulk rule had not already
+  taken. New options `bulk_tcp_ports` (default `80,8080`) and `bulk_udp_ports`
+  (default empty) make the two rules independent: plain HTTP goes to Bulk
+  wholesale, while HTTPS is judged per packet by size. Leaving either option
+  unset falls back to the browsing list, preserving the old behaviour for
+  existing configs.
 - **Rule order documented.** The four classification rules form a cascade and
   the docs never said so, which made two of them easy to misread: Bulk marks
   *all* web traffic of a priority device rather than only large downloads, and

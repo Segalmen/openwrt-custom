@@ -54,13 +54,16 @@ already marked is not re-marked, because the Browsing rule matches CS0 only.
 |---|------|-----------------|----------------|
 | 1 | Priority UDP | priority devices, gaming UDP ports | Voice tier |
 | 2 | Priority TCP | priority devices, gaming TCP ports | your choice |
-| 3 | Bulk | priority devices, **all** browsing ports | Bulk tier |
+| 3 | Bulk | priority devices, Bulk port lists | Bulk tier |
+| 3b | Big HTTPS | priority devices, HTTPS packets > 1000 bytes | Bulk tier |
 | 4 | Browsing | anything still CS0 — in practice the rest of the LAN | Video tier |
 
-The consequence worth knowing: enabling **Bulk** sends *all* web traffic of
-the priority device to the Bulk tier, not just large downloads. Browsing then
-applies to your other devices only. Leave Bulk off if the priority device is
-also the one you browse from.
+Two consequences worth knowing. Whatever the Bulk rule marks never reaches
+Browsing, so with Bulk on, Browsing applies to your other devices only. And
+Big HTTPS only acts on ports the Bulk rule left alone — which is why 443 is
+absent from the default Bulk TCP ports: plain HTTP goes to Bulk wholesale,
+while on HTTPS each packet is judged by size, keeping browsing responsive and
+sending large downloads to the Bulk tier.
 
 ### Priority UDP Classification
 Mark UDP traffic from/to priority devices on the specified ports with a
@@ -81,16 +84,18 @@ DSCP value. Only marks CS0 traffic — does not overwrite existing marks, so
 with Bulk enabled it applies to every device except the priority ones.
 
 ### Bulk Traffic Classification
-Mark the web traffic (HTTP/HTTPS/QUIC) of priority devices with a lower DSCP
-value so it does not compete with real-time traffic. This covers **every port
-in the browsing port lists**, not only large downloads.
+Mark the web traffic of priority devices with a lower DSCP value so it does
+not compete with real-time traffic. Since v1.8.0 it has its own port lists,
+`bulk_tcp_ports` and `bulk_udp_ports`, independent of the browsing ones.
+Defaults: `80,8080` for TCP, empty for UDP. Leaving either empty falls back
+to the matching browsing list, which is how installs before v1.8.0 behaved.
 
 ### Big HTTPS Auto-Downgrade
 Downgrades large HTTPS packets (> 1000 bytes) from priority devices to the
-Bulk DSCP value. It lives inside the Bulk rule, so it requires Bulk
-Classification to be enabled — and since that rule already marks port 443,
-this option only changes anything if you remove 443 from the Browsing TCP
-ports list.
+Bulk DSCP value — the per-packet half of the Bulk rule. It lives inside the
+Bulk rule, so it requires Bulk Classification to be enabled, and it only acts
+on ports the Bulk lists leave alone. Keep 443 out of `bulk_tcp_ports` for it
+to do anything.
 
 ---
 
