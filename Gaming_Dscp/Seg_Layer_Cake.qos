@@ -127,6 +127,10 @@ _load_uci_options() {
     BROWSING_UDP_PORTS="$(uci_get "$SQM_SECTION" browsing_udp_ports '443')"
 
     BULK_ENABLE="$(uci_get "$SQM_SECTION" gaming_bulk_enable 0)"
+    # Bulk has its own port lists. Unset falls back to the browsing lists,
+    # which is what installs made before v1.8.0 relied on.
+    BULK_TCP_PORTS="$(uci_get "$SQM_SECTION" bulk_tcp_ports "$BROWSING_TCP_PORTS")"
+    BULK_UDP_PORTS="$(uci_get "$SQM_SECTION" bulk_udp_ports "$BROWSING_UDP_PORTS")"
     BULK_DSCP="$(uci_get "$SQM_SECTION" gaming_bulk_dscp cs1)"
 
     # Big HTTPS auto-downgrade
@@ -151,7 +155,7 @@ _load_uci_options() {
     export PRIORITY_UDP_ENABLE PRIORITY_UDP_DSCP PRIORITY_UDP_PORTS
     export PRIORITY_TCP_ENABLE PRIORITY_TCP_DSCP PRIORITY_TCP_PORTS
     export BROWSING_ENABLE BROWSING_DSCP BROWSING_TCP_PORTS BROWSING_UDP_PORTS
-    export BULK_ENABLE BULK_DSCP
+    export BULK_ENABLE BULK_DSCP BULK_TCP_PORTS BULK_UDP_PORTS
     export BIG_HTTPS_DOWNGRADE
 }
 
@@ -363,54 +367,54 @@ _build_dscp_rules() {
     # ------------------------------------------------------------------
     if [ "$BULK_ENABLE" = "1" ]; then
 
-        if [ -n "$BROWSING_TCP_PORTS" ]; then
+        if [ -n "$BULK_TCP_PORTS" ]; then
             nft add rule inet sqm_dscp "$_chain" \
                 ip saddr "$PRIORITY_IP_SET" \
-                tcp dport { "$BROWSING_TCP_PORTS" } \
+                tcp dport { "$BULK_TCP_PORTS" } \
                 counter ip dscp set "$BULK_DSCP" \
                 comment "BulkTCPup4"
 
             nft add rule inet sqm_dscp "$_chain" \
                 ip daddr "$PRIORITY_IP_SET" \
-                tcp sport { "$BROWSING_TCP_PORTS" } \
+                tcp sport { "$BULK_TCP_PORTS" } \
                 counter ip dscp set "$BULK_DSCP" \
                 comment "BulkTCPdwn4"
 
             nft add rule inet sqm_dscp "$_chain" \
                 ip6 saddr "$PRIORITY_IP6_SET" \
-                tcp dport { "$BROWSING_TCP_PORTS" } \
+                tcp dport { "$BULK_TCP_PORTS" } \
                 counter ip6 dscp set "$BULK_DSCP" \
                 comment "BulkTCPup6"
 
             nft add rule inet sqm_dscp "$_chain" \
                 ip6 daddr "$PRIORITY_IP6_SET" \
-                tcp sport { "$BROWSING_TCP_PORTS" } \
+                tcp sport { "$BULK_TCP_PORTS" } \
                 counter ip6 dscp set "$BULK_DSCP" \
                 comment "BulkTCPdwn6"
         fi
 
-        if [ -n "$BROWSING_UDP_PORTS" ]; then
+        if [ -n "$BULK_UDP_PORTS" ]; then
             nft add rule inet sqm_dscp "$_chain" \
                 ip saddr "$PRIORITY_IP_SET" \
-                udp dport { "$BROWSING_UDP_PORTS" } \
+                udp dport { "$BULK_UDP_PORTS" } \
                 counter ip dscp set "$BULK_DSCP" \
                 comment "BulkUDPup4"
 
             nft add rule inet sqm_dscp "$_chain" \
                 ip daddr "$PRIORITY_IP_SET" \
-                udp sport { "$BROWSING_UDP_PORTS" } \
+                udp sport { "$BULK_UDP_PORTS" } \
                 counter ip dscp set "$BULK_DSCP" \
                 comment "BulkUDPdwn4"
 
             nft add rule inet sqm_dscp "$_chain" \
                 ip6 saddr "$PRIORITY_IP6_SET" \
-                udp dport { "$BROWSING_UDP_PORTS" } \
+                udp dport { "$BULK_UDP_PORTS" } \
                 counter ip6 dscp set "$BULK_DSCP" \
                 comment "BulkUDPup6"
 
             nft add rule inet sqm_dscp "$_chain" \
                 ip6 daddr "$PRIORITY_IP6_SET" \
-                udp sport { "$BROWSING_UDP_PORTS" } \
+                udp sport { "$BULK_UDP_PORTS" } \
                 counter ip6 dscp set "$BULK_DSCP" \
                 comment "BulkUDPdwn6"
         fi

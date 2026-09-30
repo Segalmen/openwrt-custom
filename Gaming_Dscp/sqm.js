@@ -435,11 +435,11 @@ return view.extend({
             _('Enable bulk traffic classification'));
         o.default     = '0';
         o.rmempty     = false;
-        o.description = _('Rule 3 of 4. Marks ALL web traffic of the priority devices above — ' +
-                          'every port in the browsing port lists, not just large downloads — ' +
-                          'with the Bulk DSCP value. Use it when the priority device is a ' +
-                          'dedicated gaming machine whose browsing may yield to everything else. ' +
-                          'Leave it off to keep that device browsing at the Browsing DSCP.');
+        o.description = _('Rule 3 of 4. Marks the web traffic of the priority devices above, ' +
+                          'on the Bulk port lists below, with the Bulk DSCP value. ' +
+                          'The default lists cover plain HTTP and leave 443 to the ' +
+                          'Big HTTPS Auto-Downgrade, so browsing stays responsive while ' +
+                          'large downloads are deprioritized.');
 
         o = s.taboption('tab_dscp', form.ListValue, 'gaming_bulk_dscp',
             _('Bulk traffic DSCP'));
@@ -456,6 +456,28 @@ return view.extend({
                           'CS1 is the classical choice. LEPHB (RFC8622) is the modern equivalent ' +
                           'specifically designed for "scavenger" traffic that yields to everything else.');
 
+        o = s.taboption('tab_dscp', form.Value, 'bulk_tcp_ports',
+            _('Bulk TCP ports'));
+        o.placeholder = '80,8080';
+        o.rmempty     = true;
+        o.depends('gaming_bulk_enable', '1');
+        o.validate    = validatePortList;
+        o.description = _('TCP ports of the priority devices sent to the Bulk DSCP. ' +
+                          'Leave 443 out to let Big HTTPS Auto-Downgrade below decide ' +
+                          'per packet, so ordinary browsing stays responsive while large ' +
+                          'downloads are deprioritized. Empty falls back to the Browsing ' +
+                          'TCP ports, the pre-1.8.0 behaviour.');
+
+        o = s.taboption('tab_dscp', form.Value, 'bulk_udp_ports',
+            _('Bulk UDP ports'));
+        o.placeholder = '';
+        o.rmempty     = true;
+        o.depends('gaming_bulk_enable', '1');
+        o.validate    = validatePortList;
+        o.description = _('UDP ports of the priority devices sent to the Bulk DSCP. ' +
+                          'Empty falls back to the Browsing UDP ports, the pre-1.8.0 ' +
+                          'behaviour; set 443 to deprioritize all QUIC from those devices.');
+
         // ==== Big HTTPS auto-downgrade ====
         o = s.taboption('tab_dscp', form.Flag, 'big_https_downgrade',
             _('Enable big HTTPS auto-downgrade'));
@@ -463,9 +485,9 @@ return view.extend({
         o.rmempty     = false;
         o.depends('gaming_bulk_enable', '1');
         o.description = _('Downgrades large HTTPS packets (&gt;1000 bytes) from priority devices ' +
-                          'to the Bulk DSCP value. Note that the rule above already marks every ' +
-                          'browsing port, 443 included, so this only changes anything if you ' +
-                          'remove 443 from the Browsing TCP ports list.');
+                          'to the Bulk DSCP value — the per-packet half of the Bulk rule. ' +
+                          'It has no effect on ports already listed above, so keep 443 out of ' +
+                          'the Bulk TCP ports for it to do anything.');
 
 
         // ==================================================================
