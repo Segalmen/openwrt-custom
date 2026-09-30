@@ -162,11 +162,11 @@ print_section "5. Priority TCP rules (priority devices → Priority TCP DSCP)"
 print_rules "PrioTCP"
 
 # ----------------------------------------------------------------------------
-print_section "6. Bulk TCP rules (web/HTTPS → Bulk DSCP)"
+print_section "6. Bulk TCP rules (priority devices, Bulk TCP ports → Bulk DSCP)"
 print_rules "BulkTCP"
 
 # ----------------------------------------------------------------------------
-print_section "7. Bulk UDP rules (UDP web → Bulk DSCP)"
+print_section "7. Bulk UDP rules (priority devices, Bulk UDP ports → Bulk DSCP)"
 print_rules "BulkUDP"
 
 # ----------------------------------------------------------------------------
@@ -174,7 +174,7 @@ print_section "8. Big HTTPS auto-downgrade (>1000 bytes → Bulk DSCP)"
 print_rules "BigHTTPS"
 
 # ----------------------------------------------------------------------------
-print_section "9. Browsing rules (CS0 web traffic → Browsing DSCP)"
+print_section "9. Browsing rules (traffic still CS0 → Browsing DSCP)"
 print_rules "Brows"
 
 # ----------------------------------------------------------------------------
@@ -332,15 +332,17 @@ echo "===================================================================="
 echo "  Quick health check :"
 echo ""
 PRIO_PKTS="$(nft list table inet sqm_dscp 2>/dev/null | grep -E 'PrioUDPup4|PrioUDPdwn4' | sed -n 's/.*counter packets \([0-9]*\) .*/\1/p' | awk '{s+=$1} END {print s}')"
-BULK_PKTS="$(nft list table inet sqm_dscp 2>/dev/null | grep -E 'BulkTCP' | sed -n 's/.*counter packets \([0-9]*\) .*/\1/p' | awk '{s+=$1} END {print s}')"
+# Bulk and Big HTTPS share one verdict: with the shipped Bulk ports (80,8080)
+# most deprioritized traffic is matched by Big HTTPS on 443, not by BulkTCP.
+BULK_PKTS="$(nft list table inet sqm_dscp 2>/dev/null | grep -E 'BulkTCP|BigHTTPS' | sed -n 's/.*counter packets \([0-9]*\) .*/\1/p' | awk '{s+=$1} END {print s}')"
 
 [ "${PRIO_PKTS:-0}" -gt 0 ] 2>/dev/null \
-    && echo "  ✓ Priority UDP IPv4 has matched ${PRIO_PKTS} packets (gaming detected)" \
-    || echo "  ⚠ No Priority UDP IPv4 traffic seen yet (start a game session)"
+    && echo "  ✓ Priority UDP IPv4 has matched ${PRIO_PKTS} packets" \
+    || echo "  ⚠ No Priority UDP IPv4 traffic seen yet (run the application you configured the ports for)"
 
 [ "${BULK_PKTS:-0}" -gt 0 ] 2>/dev/null \
-    && echo "  ✓ Bulk TCP has matched ${BULK_PKTS} packets (web traffic classified)" \
-    || echo "  ⚠ No Bulk TCP traffic seen yet"
+    && echo "  ✓ Bulk / Big HTTPS has matched ${BULK_PKTS} packets (deprioritization active)" \
+    || echo "  ⚠ No Bulk or Big HTTPS traffic seen yet"
 
 echo ""
 if [ "$ANONYMIZE" = "1" ]; then

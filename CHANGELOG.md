@@ -3,6 +3,12 @@
 ## [Unreleased]
 
 ### Changed
+- **The validator no longer warns when Bulk is working as designed.** Its
+  verdict counted `BulkTCP` alone, but since 1.8.0 the shipped Bulk ports are
+  `80,8080`: plain HTTP, which barely exists. Deprioritization now happens
+  through Big HTTPS on 443, so the check counted zero and warned on a healthy
+  setup. Both rules now share one verdict. Section labels no longer describe
+  the Bulk rules as covering HTTPS, and the gaming wording is gone.
 - **README sections follow the rule order too.** Browsing was described before
   Bulk, six lines below a table announcing the opposite order, and the new
   per-use-case port list sat between the two Priority sections. Both are now in
