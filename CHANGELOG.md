@@ -3,6 +3,10 @@
 ## [Unreleased]
 
 ### Changed
+- **README sections follow the rule order too.** Browsing was described before
+  Bulk, six lines below a table announcing the opposite order, and the new
+  per-use-case port list sat between the two Priority sections. Both are now in
+  cascade order, with the port table after the rules it applies to.
 - **The DSCP Policies tab follows the rule order again.** Browsing (rule 4)
   appeared above Bulk (rule 3) and Big HTTPS, so the numbering introduced in
   1.8.0 read as a mistake. The form now lists the rules in the order nftables

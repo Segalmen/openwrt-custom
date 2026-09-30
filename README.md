@@ -73,6 +73,30 @@ The configured ports are matched on both sides of each flow: the local
 port (consoles and clients with a fixed local port) and the remote server
 port (clients that use a random local port, common on PC).
 
+### Priority TCP Classification
+Mark TCP traffic from/to priority devices (optional), with the same
+local/remote port matching as Priority UDP.
+Useful for remote desktop, video conferencing signalling, etc.
+
+### Bulk Traffic Classification
+Mark the web traffic of priority devices with a lower DSCP value so it does
+not compete with real-time traffic. Since v1.8.0 it has its own port lists,
+`bulk_tcp_ports` and `bulk_udp_ports`, independent of the browsing ones.
+Defaults: `80,8080` for TCP, empty for UDP. Leaving either empty falls back
+to the matching browsing list, which is how installs before v1.8.0 behaved.
+
+### Big HTTPS Auto-Downgrade
+Downgrades large HTTPS packets (> 1000 bytes) from priority devices to the
+Bulk DSCP value — the per-packet half of the Bulk rule. It lives inside the
+Bulk rule, so it requires Bulk Classification to be enabled, and it only acts
+on ports the Bulk lists leave alone. Keep 443 out of `bulk_tcp_ports` for it
+to do anything.
+
+### Browsing Classification
+Optionally classify web browsing traffic (HTTP/HTTPS/QUIC) with a specific
+DSCP value. Only marks CS0 traffic — does not overwrite existing marks, so
+with Bulk enabled it applies to every device except the priority ones.
+
 ### Common ports per use case
 
 The shipped lists target gaming. For other latency-sensitive uses, add the
@@ -92,30 +116,6 @@ Two things worth knowing. A VPN tunnel is a **single flow** for CAKE, so
 everything inside it — a video call and a file download alike — gets the class
 you set for it. And the shipped UDP list stops at `3480`, so Teams screen
 sharing on `3481` is not covered unless you add it.
-
-### Priority TCP Classification
-Mark TCP traffic from/to priority devices (optional), with the same
-local/remote port matching as Priority UDP.
-Useful for remote desktop, video conferencing signalling, etc.
-
-### Browsing Classification
-Optionally classify web browsing traffic (HTTP/HTTPS/QUIC) with a specific
-DSCP value. Only marks CS0 traffic — does not overwrite existing marks, so
-with Bulk enabled it applies to every device except the priority ones.
-
-### Bulk Traffic Classification
-Mark the web traffic of priority devices with a lower DSCP value so it does
-not compete with real-time traffic. Since v1.8.0 it has its own port lists,
-`bulk_tcp_ports` and `bulk_udp_ports`, independent of the browsing ones.
-Defaults: `80,8080` for TCP, empty for UDP. Leaving either empty falls back
-to the matching browsing list, which is how installs before v1.8.0 behaved.
-
-### Big HTTPS Auto-Downgrade
-Downgrades large HTTPS packets (> 1000 bytes) from priority devices to the
-Bulk DSCP value — the per-packet half of the Bulk rule. It lives inside the
-Bulk rule, so it requires Bulk Classification to be enabled, and it only acts
-on ports the Bulk lists leave alone. Keep 443 out of `bulk_tcp_ports` for it
-to do anything.
 
 ---
 
