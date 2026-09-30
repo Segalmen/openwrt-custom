@@ -184,20 +184,48 @@ print_rules "Store"
 # ----------------------------------------------------------------------------
 print_section "11. CAKE qdisc summary"
 echo ""
-echo "  >>> UPLOAD direction (dev $WAN_IF) <<<"
-if [ -n "$WAN_IF" ] && tc qdisc show dev "$WAN_IF" 2>/dev/null | grep -q cake; then
-    tc -s qdisc show dev "$WAN_IF" 2>/dev/null | head -5 | sed 's/^/    /'
-else
-    echo "    (no CAKE qdisc on $WAN_IF)"
-fi
-
+# With cake_mq the root qdisc is followed by one CAKE instance per hardware
+# queue, most of them idle. Print the root, then the busiest instance — the
+# same one section 12 details — instead of whichever child comes first.
+print_qdisc_summary() {
+    dev="$1"
+    direction="$2"
+    echo "  >>> $direction direction (dev ${dev:-unknown}) <<<"
+    if [ -z "$dev" ] || ! tc qdisc show dev "$dev" 2>/dev/null | grep -q cake; then
+        echo "    (no CAKE qdisc on ${dev:-unknown})"
+        return
+    fi
+    tc -s qdisc show dev "$dev" 2>/dev/null | awk '
+        /^qdisc / { n++; head[n] = $0; child[n] = ($2 == "cake" && index($0, "parent") > 0); next }
+        n && /^[[:space:]]+Sent [0-9]+ bytes [0-9]+ pkt/ {
+            if (!(n in sent)) { sent[n] = $0; pk[n] = $4 + 0 }
+            next
+        }
+        n && /^[[:space:]]+(backlog [0-9]+b [0-9]+p requeues|memory used|capacity estimate)/ {
+            if (!child[n]) extra[n] = extra[n] "    " $0 "\n"
+            next
+        }
+        END {
+            if (!n) exit
+            print "    " head[1]
+            if (1 in sent) print "    " sent[1]
+            printf "%s", extra[1]
+            best = 0; cnt = 0
+            for (i = 2; i <= n; i++) {
+                if (!child[i]) continue
+                cnt++
+                if (!best || pk[i] > pk[best]) best = i
+            }
+            if (!best) exit
+            printf "    (cake_mq: busiest of %d queues, %d pkts)\n", cnt, pk[best]
+            print "    " head[best]
+            if (best in sent) print "    " sent[best]
+        }
+    '
+}
+print_qdisc_summary "$WAN_IF" "UPLOAD"
 echo ""
-echo "  >>> DOWNLOAD direction (dev $IFB_IF) <<<"
-if [ -n "$IFB_IF" ] && tc qdisc show dev "$IFB_IF" 2>/dev/null | grep -q cake; then
-    tc -s qdisc show dev "$IFB_IF" 2>/dev/null | head -5 | sed 's/^/    /'
-else
-    echo "    (no CAKE qdisc on $IFB_IF)"
-fi
+print_qdisc_summary "$IFB_IF" "DOWNLOAD"
 
 # ----------------------------------------------------------------------------
 print_section "12. CAKE per-tin latency (Voice tin = CS4, CS5, CS6, CS7, EF, VA)"
