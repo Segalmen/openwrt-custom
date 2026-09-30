@@ -3,6 +3,11 @@
 ## [Unreleased]
 
 ### Changed
+- **The DSCP Policies tab follows the rule order again.** Browsing (rule 4)
+  appeared above Bulk (rule 3) and Big HTTPS, so the numbering introduced in
+  1.8.0 read as a mistake. The form now lists the rules in the order nftables
+  evaluates them. The Browsing TCP ports hint no longer mentions DoT: port 853
+  left the shipped default in 1.8.1.
 - **Port fields now say which ports to use.** The Priority UDP and TCP
   descriptions listed no example beyond the shipped gaming defaults, leaving
   anyone setting up remote desktop, a VPN or video conferencing to guess. They

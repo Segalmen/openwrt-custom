@@ -388,58 +388,6 @@ return view.extend({
                           'as 3074 and 3659. Bulk TCP (patch downloads, cloud sync) does not ' +
                           'belong here — see the Bulk rule below.');
 
-        // ==== Browsing ====
-        o = s.taboption('tab_dscp', form.Flag, 'browsing_enable',
-            _('Enable web browsing classification'));
-        o.default     = '0';
-        o.rmempty     = false;
-        o.description = _('Rule 4 of 4. Applies a DSCP to web traffic (HTTP/HTTPS/QUIC) that ' +
-                          'is still unmarked (CS0) — in practice every device on the LAN except ' +
-                          'a priority device whose traffic the rules above have already matched.');
-
-        o = s.taboption('tab_dscp', form.Value, 'browsing_tcp_ports',
-            _('Browsing TCP ports'));
-        o.placeholder = '80,8080,443';
-        o.rmempty     = true;
-        o.depends('browsing_enable', '1');
-        o.validate    = validatePortList;
-        o.description = _('TCP ports for web traffic (HTTP, HTTPS, DoT...).');
-
-        o = s.taboption('tab_dscp', form.Value, 'browsing_udp_ports',
-            _('Browsing UDP ports'));
-        o.placeholder = '443';
-        o.rmempty     = true;
-        o.depends('browsing_enable', '1');
-        o.validate    = validatePortList;
-        o.description = _('UDP ports for web traffic (QUIC/HTTP3).');
-
-        o = s.taboption('tab_dscp', form.ListValue, 'browsing_dscp',
-            _('Browsing DSCP'));
-        o.value('af31', _('AF31 — Multimedia streaming (→ Video tier, highest browsing prio)'));
-        o.value('af21', _('AF21 — Low-latency web (→ Video tier, default)'));
-        o.value('af22', _('AF22 — Low-latency web medium drop (→ Video tier)'));
-        o.value('af23', _('AF23 — Low-latency web high drop (→ Video tier)'));
-        o.value('cs3',  _('CS3 — Broadcast (→ Video tier)'));
-        o.value('cs2',  _('CS2 — OAM (→ Video tier)'));
-        o.value('cs0',  _('CS0 — Default (→ Best Effort, no marking benefit)'));
-        o.value('af13', _('AF13 — Low-priority data, high drop (→ Best Effort tier)'));
-        o.value('af12', _('AF12 — Low-priority data, medium drop (→ Best Effort tier)'));
-        o.value('af11', _('AF11 — Low-priority data (→ Best Effort tier) ★ gaming-first'));
-        o.value('cs1',  _('CS1 — Background / Bulk (→ Bulk tier)'));
-        o.value('lephb',_('LEPHB — Lower Effort PHB (RFC8622, → Bulk tier, modern)'));
-        o.default     = 'af21';
-        o.rmempty     = true;
-        o.depends('browsing_enable', '1');
-        o.description = _('DSCP value applied to web browsing traffic. ' +
-                          '<br><b>Tier mapping (diffserv4):</b> ' +
-                          'AF2x/AF3x/CS2/CS3 → Video • CS0/AF1x → Best Effort • CS1/LEPHB → Bulk. ' +
-                          '<br><b>For gaming-first setups:</b> use AF11 to keep browsing in Best Effort, ' +
-                          'below the Video and Voice tiers. ' +
-                          '<br><b>For browsing-priority setups:</b> use AF21 (default) to boost web ' +
-                          'over bulk downloads. ' +
-                          '<br><b>For deprioritization:</b> use CS1 or LEPHB to push browsing below ' +
-                          'Best Effort.');
-
         // ==== Bulk ====
         o = s.taboption('tab_dscp', form.Flag, 'gaming_bulk_enable',
             _('Enable bulk traffic classification'));
@@ -498,6 +446,58 @@ return view.extend({
                           'to the Bulk DSCP value — the per-packet half of the Bulk rule. ' +
                           'It has no effect on ports already listed above, so keep 443 out of ' +
                           'the Bulk TCP ports for it to do anything.');
+
+        // ==== Browsing ====
+        o = s.taboption('tab_dscp', form.Flag, 'browsing_enable',
+            _('Enable web browsing classification'));
+        o.default     = '0';
+        o.rmempty     = false;
+        o.description = _('Rule 4 of 4. Applies a DSCP to web traffic (HTTP/HTTPS/QUIC) that ' +
+                          'is still unmarked (CS0) — in practice every device on the LAN except ' +
+                          'a priority device whose traffic the rules above have already matched.');
+
+        o = s.taboption('tab_dscp', form.Value, 'browsing_tcp_ports',
+            _('Browsing TCP ports'));
+        o.placeholder = '80,8080,443';
+        o.rmempty     = true;
+        o.depends('browsing_enable', '1');
+        o.validate    = validatePortList;
+        o.description = _('TCP ports for web traffic (HTTP, HTTPS).');
+
+        o = s.taboption('tab_dscp', form.Value, 'browsing_udp_ports',
+            _('Browsing UDP ports'));
+        o.placeholder = '443';
+        o.rmempty     = true;
+        o.depends('browsing_enable', '1');
+        o.validate    = validatePortList;
+        o.description = _('UDP ports for web traffic (QUIC/HTTP3).');
+
+        o = s.taboption('tab_dscp', form.ListValue, 'browsing_dscp',
+            _('Browsing DSCP'));
+        o.value('af31', _('AF31 — Multimedia streaming (→ Video tier, highest browsing prio)'));
+        o.value('af21', _('AF21 — Low-latency web (→ Video tier, default)'));
+        o.value('af22', _('AF22 — Low-latency web medium drop (→ Video tier)'));
+        o.value('af23', _('AF23 — Low-latency web high drop (→ Video tier)'));
+        o.value('cs3',  _('CS3 — Broadcast (→ Video tier)'));
+        o.value('cs2',  _('CS2 — OAM (→ Video tier)'));
+        o.value('cs0',  _('CS0 — Default (→ Best Effort, no marking benefit)'));
+        o.value('af13', _('AF13 — Low-priority data, high drop (→ Best Effort tier)'));
+        o.value('af12', _('AF12 — Low-priority data, medium drop (→ Best Effort tier)'));
+        o.value('af11', _('AF11 — Low-priority data (→ Best Effort tier) ★ gaming-first'));
+        o.value('cs1',  _('CS1 — Background / Bulk (→ Bulk tier)'));
+        o.value('lephb',_('LEPHB — Lower Effort PHB (RFC8622, → Bulk tier, modern)'));
+        o.default     = 'af21';
+        o.rmempty     = true;
+        o.depends('browsing_enable', '1');
+        o.description = _('DSCP value applied to web browsing traffic. ' +
+                          '<br><b>Tier mapping (diffserv4):</b> ' +
+                          'AF2x/AF3x/CS2/CS3 → Video • CS0/AF1x → Best Effort • CS1/LEPHB → Bulk. ' +
+                          '<br><b>For gaming-first setups:</b> use AF11 to keep browsing in Best Effort, ' +
+                          'below the Video and Voice tiers. ' +
+                          '<br><b>For browsing-priority setups:</b> use AF21 (default) to boost web ' +
+                          'over bulk downloads. ' +
+                          '<br><b>For deprioritization:</b> use CS1 or LEPHB to push browsing below ' +
+                          'Best Effort.');
 
 
         // ==================================================================
