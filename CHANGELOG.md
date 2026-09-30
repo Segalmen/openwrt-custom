@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Changed
+- **`enable_mq` now defaults to 0.** With `USE_MQ` exported from the UCI
+  option, `select_cake()` installed cake_mq on any multi-queue NIC. Without
+  system tuning (one queue per core, RPS off on the WAN, irqbalance) this can
+  perform worse than plain cake, so the default now matches sqm-scripts 1.7.2.
+  Existing configs keep whatever they already set.
+
 ### Fixed
 - **Config lost on re-install.** The installer only ever wrote
   `/etc/config/sqm.orig`, and only when no `.orig` existed, so a second

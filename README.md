@@ -25,8 +25,10 @@ This project provides:
 The custom SQM interface adds a **DSCP Policies** tab in LuCI.
 
 ### Multi-Queue Support
-Enable `cake_mq` for hardware with multiple CPU cores or NIC queues.
-Recommended on routers with 2+ CPU cores for better throughput distribution.
+`cake_mq` spreads the queue across multiple CPU cores or NIC queues. It is
+**off by default**: without system tuning (one queue per core, RPS off on the
+WAN, irqbalance) it can perform worse than plain `cake`. sqm-scripts made the
+same choice in 1.7.2. Turn it on only if you can measure the difference.
 
 ### DSCP Restore via conntrack (ctinfo)
 Store DSCP into conntrack mark and restore it on ingress using the `ctinfo`
