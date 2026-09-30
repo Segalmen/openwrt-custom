@@ -3,6 +3,12 @@
 ## [Unreleased]
 
 ### Changed
+- **`priority_udp_dscp` now defaults to `ef` instead of `cs4`.** Measured on
+  the bench and confirmed against the kernel tables in `sch_cake.c`: on
+  diffserv3 — the sqm-scripts default — CS4 lands in Best Effort, so priority
+  traffic gets no priority at all unless the shipped config (diffserv4) is in
+  use. EF reaches the Voice tier on diffserv3, diffserv4 and diffserv8 alike,
+  and `cfg80211_classify8021d()` maps it to AC_VO rather than AC_VI on Wi-Fi.
 - **`enable_mq` now defaults to 0.** With `USE_MQ` exported from the UCI
   option, `select_cake()` installed cake_mq on any multi-queue NIC. Without
   system tuning (one queue per core, RPS off on the WAN, irqbalance) this can

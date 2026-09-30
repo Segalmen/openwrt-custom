@@ -105,7 +105,7 @@ with three recommended profiles:
 
 | Dropdown | Recommended | Rationale |
 |----------|-------------|-----------|
-| Priority UDP | `CS4` | Voice tier, highest CAKE priority |
+| Priority UDP | `EF` (default) | Voice tier on diffserv3, diffserv4 and diffserv8; Wi-Fi AC_VO |
 | Priority TCP | `CS0` | Gaming TCP (auth, login) shouldn't compete with real-time UDP |
 | Browsing | `AF21` (default) or `AF11` (gaming-first) | See profiles above |
 | Bulk | `CS1` | Classic background; `LEPHB` for the modern RFC8622 equivalent |

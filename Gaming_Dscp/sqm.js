@@ -302,10 +302,10 @@ return view.extend({
 
         o = s.taboption('tab_dscp', form.ListValue, 'priority_udp_dscp',
             _('Priority DSCP — UDP'));
-        o.value('ef',   _('EF — Expedited Forwarding (→ Voice tier, highest)'));
+        o.value('ef',   _('EF — Expedited Forwarding (→ Voice tier, highest) ★ recommended'));
         o.value('va',   _('VA — Voice Admit (→ Voice tier)'));
         o.value('cs5',  _('CS5 — Signaling (→ Voice tier)'));
-        o.value('cs4',  _('CS4 — Real-time interactive (→ Voice tier) ★ recommended'));
+        o.value('cs4',  _('CS4 — Real-time interactive (→ Voice tier on diffserv4 only)'));
         o.value('af41', _('AF41 — Multimedia conferencing low drop (→ Video tier)'));
         o.value('af42', _('AF42 — Multimedia conferencing medium drop (→ Video tier)'));
         o.value('af43', _('AF43 — Multimedia conferencing high drop (→ Video tier)'));
@@ -315,12 +315,14 @@ return view.extend({
         o.value('cs3',  _('CS3 — Broadcast (→ Video tier)'));
         o.value('cs2',  _('CS2 — OAM (→ Video tier)'));
         o.value('cs0',  _('CS0 — Default (→ Best Effort tier)'));
-        o.default     = 'cs4';
+        o.default     = 'ef';
         o.rmempty     = false;
         o.depends('priority_udp_enable', '1');
         o.description = _('DSCP value applied to matched UDP traffic. ' +
-                          'CS4 is the recommended value for online gaming. On diffserv4 it maps to ' +
-                          'the Voice tier, the highest CAKE priority, alongside EF and CS6.');
+                          'EF is the safest choice: it reaches the Voice tier on diffserv3, ' +
+                          'diffserv4 and diffserv8 alike, and Wi-Fi maps it to AC_VO. ' +
+                          'CS4 only reaches the Voice tier on diffserv4 and diffserv8 — on ' +
+                          'diffserv3, the sqm-scripts default, it falls into Best Effort.');
 
         o = s.taboption('tab_dscp', form.Value, 'gaming_udp_ports',
             _('Priority UDP ports'));
