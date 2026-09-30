@@ -90,6 +90,17 @@ dscp_to_ctmark() {
     esac
 }
 
+# Return $1 if it is a DSCP class the project knows, else $2 and log why.
+# $3 is the UCI option name, for the log line only.
+validate_dscp() {
+    if dscp_to_ctmark "$1" >/dev/null 2>&1; then
+        printf '%s' "$1"
+    else
+        logger -t SQM "Seg_Layer_Cake.qos: invalid $3 '$1' — falling back to '$2'"
+        printf '%s' "$2"
+    fi
+}
+
 # =============================================================================
 # SQM section detection — bound to $IFACE
 # =============================================================================
@@ -143,6 +154,15 @@ _load_uci_options() {
     PRIORITY_TCP_DSCP="$(printf '%s' "$PRIORITY_TCP_DSCP" | tr '[:upper:]' '[:lower:]')"
     BROWSING_DSCP="$(printf '%s'     "$BROWSING_DSCP"     | tr '[:upper:]' '[:lower:]')"
     BULK_DSCP="$(printf '%s'         "$BULK_DSCP"         | tr '[:upper:]' '[:lower:]')"
+
+    # A DSCP set outside LuCI (uci set, restored config, hand-edited file) can
+    # be anything. nftables would reject the rule and the whole policy would be
+    # missing while SQM still reports success, so fall back to the default and
+    # say so in the log. dscp_to_ctmark() knows every class the project uses.
+    PRIORITY_UDP_DSCP="$(validate_dscp "$PRIORITY_UDP_DSCP" ef   priority_udp_dscp)"
+    PRIORITY_TCP_DSCP="$(validate_dscp "$PRIORITY_TCP_DSCP" cs0  priority_tcp_dscp)"
+    BROWSING_DSCP="$(validate_dscp     "$BROWSING_DSCP"     af21 browsing_dscp)"
+    BULK_DSCP="$(validate_dscp         "$BULK_DSCP"         cs1  gaming_bulk_dscp)"
 
     # Build nftables IP sets
     PRIORITY_IP_SET="$(make_nft_set "$PRIORITY_IP_RAW")"
