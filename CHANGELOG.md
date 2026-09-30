@@ -1,6 +1,6 @@
 # Changelog
 
-## [Unreleased]
+## [1.8.2] — 2026-09-30
 
 ### Changed
 - **The Connections view kept showing connections that were already closed.**
