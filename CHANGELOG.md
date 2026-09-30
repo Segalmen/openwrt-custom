@@ -10,6 +10,13 @@
   shows it in LuCI. Makes forum support reports unambiguous.
 
 ### Changed
+- **Rule order documented.** The four classification rules form a cascade and
+  the docs never said so, which made two of them easy to misread: Bulk marks
+  *all* web traffic of a priority device rather than only large downloads, and
+  Browsing only ever sees what is still CS0. LuCI descriptions now number the
+  rules and name what each one targets; the README gained a rule-order table.
+  Big HTTPS Auto-Downgrade is also documented as a no-op unless 443 is removed
+  from the browsing port list, since the Bulk rule already covers it.
 - **Connections view colours now follow the CAKE tins.** They previously
   showed a generic DSCP hierarchy: CS4 appeared as medium priority although
   diffserv4 puts it in the Voice tin, and CS2/AF2x appeared as low priority

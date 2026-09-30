@@ -307,8 +307,9 @@ return view.extend({
             _('Enable Priority UDP classification'));
         o.default     = '0';
         o.rmempty     = false;
-        o.description = _('Mark UDP traffic from/to priority devices on the specified ports ' +
-                          'with the selected DSCP value. Suitable for gaming, VoIP, real-time apps.');
+        o.description = _('Rule 1 of 4. Marks UDP traffic from/to the priority devices above, ' +
+                          'on the specified ports, with the selected DSCP value. ' +
+                          'Suitable for gaming, VoIP, real-time apps.');
 
         o = s.taboption('tab_dscp', form.ListValue, 'priority_udp_dscp',
             _('Priority DSCP — UDP'));
@@ -347,8 +348,9 @@ return view.extend({
             _('Enable Priority TCP classification'));
         o.default     = '0';
         o.rmempty     = false;
-        o.description = _('Mark TCP traffic from/to priority devices on the specified ports. ' +
-                          'Useful for remote desktop, video conferencing signalling, etc.');
+        o.description = _('Rule 2 of 4. Marks TCP traffic from/to the priority devices above, ' +
+                          'on the specified ports. Useful for remote desktop, video conferencing ' +
+                          'signalling, etc.');
 
         o = s.taboption('tab_dscp', form.ListValue, 'priority_tcp_dscp',
             _('Priority DSCP — TCP'));
@@ -381,8 +383,9 @@ return view.extend({
             _('Enable web browsing classification'));
         o.default     = '0';
         o.rmempty     = false;
-        o.description = _('Apply a specific DSCP to web traffic (HTTP/HTTPS/QUIC). ' +
-                          'Can be used to deprioritize bulk web traffic relative to real-time flows.');
+        o.description = _('Rule 4 of 4. Applies a DSCP to web traffic (HTTP/HTTPS/QUIC) that ' +
+                          'is still unmarked (CS0) — in practice every device on the LAN except ' +
+                          'a priority device whose traffic the rules above have already matched.');
 
         o = s.taboption('tab_dscp', form.Value, 'browsing_tcp_ports',
             _('Browsing TCP ports'));
@@ -432,8 +435,11 @@ return view.extend({
             _('Enable bulk traffic classification'));
         o.default     = '0';
         o.rmempty     = false;
-        o.description = _('Mark large downloads (HTTP/HTTPS) from priority devices with a ' +
-                          'lower DSCP value so they do not compete with real-time traffic.');
+        o.description = _('Rule 3 of 4. Marks ALL web traffic of the priority devices above — ' +
+                          'every port in the browsing port lists, not just large downloads — ' +
+                          'with the Bulk DSCP value. Use it when the priority device is a ' +
+                          'dedicated gaming machine whose browsing may yield to everything else. ' +
+                          'Leave it off to keep that device browsing at the Browsing DSCP.');
 
         o = s.taboption('tab_dscp', form.ListValue, 'gaming_bulk_dscp',
             _('Bulk traffic DSCP'));
@@ -456,9 +462,10 @@ return view.extend({
         o.default     = '1';
         o.rmempty     = false;
         o.depends('gaming_bulk_enable', '1');
-        o.description = _('Automatically downgrade large HTTPS packets (&gt;1000 bytes) from ' +
-                          'priority devices to the Bulk DSCP value. ' +
-                          'Prevents big downloads from stealing bandwidth from real-time traffic.');
+        o.description = _('Downgrades large HTTPS packets (&gt;1000 bytes) from priority devices ' +
+                          'to the Bulk DSCP value. Note that the rule above already marks every ' +
+                          'browsing port, 443 included, so this only changes anything if you ' +
+                          'remove 443 from the Browsing TCP ports list.');
 
 
         // ==================================================================

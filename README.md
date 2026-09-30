@@ -44,6 +44,24 @@ restores the mark on download traffic before CAKE sees it.
 > With ctinfo OFF, rules move to prerouting and only **upload** traffic is
 > classified; download traffic reaches CAKE with the DSCP it arrived with.
 
+### Rule order — read this first
+
+The four classification rules form a cascade. They are evaluated in the order
+below, and each one only sees what the previous ones left alone: a packet
+already marked is not re-marked, because the Browsing rule matches CS0 only.
+
+| # | Rule | What it matches | Typical result |
+|---|------|-----------------|----------------|
+| 1 | Priority UDP | priority devices, gaming UDP ports | Voice tier |
+| 2 | Priority TCP | priority devices, gaming TCP ports | your choice |
+| 3 | Bulk | priority devices, **all** browsing ports | Bulk tier |
+| 4 | Browsing | anything still CS0 — in practice the rest of the LAN | Video tier |
+
+The consequence worth knowing: enabling **Bulk** sends *all* web traffic of
+the priority device to the Bulk tier, not just large downloads. Browsing then
+applies to your other devices only. Leave Bulk off if the priority device is
+also the one you browse from.
+
 ### Priority UDP Classification
 Mark UDP traffic from/to priority devices on the specified ports with a
 configurable DSCP value. Suitable for gaming, VoIP, and real-time apps.
@@ -59,16 +77,20 @@ Useful for remote desktop, video conferencing signalling, etc.
 
 ### Browsing Classification
 Optionally classify web browsing traffic (HTTP/HTTPS/QUIC) with a specific
-DSCP value. Only marks CS0 traffic — does not overwrite existing marks.
+DSCP value. Only marks CS0 traffic — does not overwrite existing marks, so
+with Bulk enabled it applies to every device except the priority ones.
 
 ### Bulk Traffic Classification
-Mark large downloads (HTTP/HTTPS) from priority devices with a lower DSCP
-value so they do not compete with real-time traffic.
+Mark the web traffic (HTTP/HTTPS/QUIC) of priority devices with a lower DSCP
+value so it does not compete with real-time traffic. This covers **every port
+in the browsing port lists**, not only large downloads.
 
 ### Big HTTPS Auto-Downgrade
-Automatically downgrade large HTTPS packets (> 1000 bytes) from priority
-devices to the Bulk DSCP value. Prevents big downloads from stealing
-bandwidth from real-time traffic, even when using port 443.
+Downgrades large HTTPS packets (> 1000 bytes) from priority devices to the
+Bulk DSCP value. It lives inside the Bulk rule, so it requires Bulk
+Classification to be enabled — and since that rule already marks port 443,
+this option only changes anything if you remove 443 from the Browsing TCP
+ports list.
 
 ---
 
