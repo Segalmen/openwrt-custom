@@ -118,7 +118,7 @@ _load_uci_options() {
     PRIORITY_UDP_PORTS="$(uci_get "$SQM_SECTION" gaming_udp_ports '3659,3074,3478-3480,10000-45000')"
 
     PRIORITY_TCP_ENABLE="$(uci_get "$SQM_SECTION" priority_tcp_enable 0)"
-    PRIORITY_TCP_DSCP="$(uci_get "$SQM_SECTION" priority_tcp_dscp af41)"
+    PRIORITY_TCP_DSCP="$(uci_get "$SQM_SECTION" priority_tcp_dscp cs0)"
     PRIORITY_TCP_PORTS="$(uci_get "$SQM_SECTION" gaming_tcp_ports '')"
 
     BROWSING_ENABLE="$(uci_get "$SQM_SECTION" browsing_enable 0)"

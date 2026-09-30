@@ -364,11 +364,13 @@ return view.extend({
         o.value('cs3',  _('CS3 — Broadcast / Signaling (→ Video tier)'));
         o.value('cs2',  _('CS2 — OAM / network mgmt (→ Video tier)'));
         o.value('cs0',  _('CS0 — Default (→ Best Effort) ★ recommended for TCP gaming'));
-        o.default     = 'af41';
+        o.default     = 'cs0';
         o.rmempty     = false;
         o.depends('priority_tcp_enable', '1');
         o.description = _('DSCP value applied to matched TCP traffic. ' +
-                          'CS0 is recommended: gaming TCP (login/auth) shouldn\'t compete with real-time UDP.');
+                          'CS0 is the default: gaming TCP (login/auth) shouldn\'t compete with ' +
+                          'real-time UDP. Pick AF41 instead for remote desktop or video ' +
+                          'conferencing, where the TCP flow is the latency-sensitive one.');
 
         o = s.taboption('tab_dscp', form.Value, 'gaming_tcp_ports',
             _('Priority TCP ports'));
