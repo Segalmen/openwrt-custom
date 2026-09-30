@@ -2,6 +2,13 @@
 
 ## [Unreleased]
 
+### Added
+- **Installed version is now visible.** A `VERSION` file at the repository
+  root is the single source of truth. `install.sh` records it in
+  `/usr/lib/sqm/Seg_Layer_Cake.version`, the SQM script logs it at startup,
+  `dscp-validate.sh` prints it in the report header, and the DSCP Policies tab
+  shows it in LuCI. Makes forum support reports unambiguous.
+
 ### Changed
 - **Connections view colours now follow the CAKE tins.** They previously
   showed a generic DSCP hierarchy: CS4 appeared as medium priority although

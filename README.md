@@ -152,6 +152,8 @@ The following packages are required for full functionality
 ## Features
 
 - CAKE queue discipline for upload and download
+- Installed version recorded at install time and shown in the DSCP Policies
+  tab, in the `dscp-validate.sh` report header and in the system log at startup
 - Optional **CAKE multi-queue (cake_mq)** support for multi-core hardware
 - Dual-mode ingress pipeline:
   - **ctinfo ON** → postrouting rules + kernel ctinfo restore (recommended, required for download)
