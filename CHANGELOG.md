@@ -10,6 +10,14 @@
   shows it in LuCI. Makes forum support reports unambiguous.
 
 ### Fixed
+- **Validator section 11 showed an arbitrary cake_mq queue.** It printed the
+  first five lines of `tc -s qdisc show`, so under cake_mq it detailed
+  whichever child instance came first — usually an idle one, and never the
+  same queue section 12 reports on. It now prints the root qdisc, then the
+  busiest instance, like section 12.
+- **`uninstall.sh` names the right package manager.** Its summary suggested
+  `opkg/apk remove` regardless of the system; it now detects apk like the
+  installer does and prints the matching command.
 - **Stray `Command failed: Not found` during installation.** Installing after
   an uninstall left SQM stopped, and the installer called `restart` regardless:
   procd printed that message from the stop half. The installer now checks
