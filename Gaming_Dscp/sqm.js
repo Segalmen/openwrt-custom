@@ -391,7 +391,7 @@ return view.extend({
 
         o = s.taboption('tab_dscp', form.Value, 'browsing_tcp_ports',
             _('Browsing TCP ports'));
-        o.placeholder = '80,8080,443,853';
+        o.placeholder = '80,8080,443';
         o.rmempty     = true;
         o.depends('browsing_enable', '1');
         o.validate    = validatePortList;
