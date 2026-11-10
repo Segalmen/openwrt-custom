@@ -119,11 +119,25 @@ fi
 # =============================================================================
 MISSING=0
 for f in \
-    "Gaming_Dscp/Seg_Layer_Cake.qos" \
-    "Gaming_Dscp/sqm.config" \
-    "Gaming_Dscp/sqm.js" \
+    "sqm/Seg_Layer_Cake.qos" \
+    "sqm/sqm.config" \
+    "sqm/sqm.js" \
     "connections/rpcd/luci.dscp" \
-    "connections/view/connections.js"
+    "connections/view/connections.js" \
+    "connections/view/serverrules.js" \
+    "connections/view/history.js" \
+    "connections/view/captures.js" \
+    "connections/view/lagsim.js" \
+    "connections/menu/luci-app-sqm_dscp.json" \
+    "connections/acl/luci-app-dscp.json" \
+    "serverrules/serverrules.sh" \
+    "serverrules/serverrules.init" \
+    "serverrules/serverrules.config" \
+    "lagsim/lagsim.sh" \
+    "lagsim/lagsim.init" \
+    "lagsim/lagsim.config" \
+    "lagsim/lagsim.hotplug" \
+    "theme/darkblue/ucode/template/themes/bootstrap-darkblue/header.ut"
 do
     if [ ! -f "$f" ]; then
         err "Missing source file: $f"
@@ -177,7 +191,12 @@ $PKG_TC
 ip-full
 lua
 luci-lib-jsonc
+luci-lua-runtime
 conntrack
+kmod-sched-flower
+kmod-netem
+tcpdump
+ca-bundle
 "
 
 # Critical packages — install MUST fail if any of these are missing.
@@ -232,15 +251,33 @@ if [ "$CRITICAL_FAIL" -gt 0 ]; then
     exit 1
 fi
 
+# HTTPS for the CIDR suggestion (RIPEstat) in Connections / Server History:
+# uclient-fetch needs one TLS backend. Only add one when none is present, so an
+# image built with openssl or wolfssl is left as it is.
+if [ "$DRY_RUN" = "1" ]; then
+    printf "  [DRY-RUN] Checking: libustream TLS backend\n"
+elif ls /lib/libustream-ssl.so* >/dev/null 2>&1; then
+    ok "libustream TLS backend already present"
+else
+    info "Installing libustream-mbedtls ..."
+    if pkg_install libustream-mbedtls; then
+        ok "libustream-mbedtls installed"
+    else
+        warn "Failed to install libustream-mbedtls — CIDR suggestion falls back to /24"
+        INSTALL_ERRORS=$((INSTALL_ERRORS + 1))
+    fi
+fi
+
 if [ "$INSTALL_ERRORS" -gt 0 ]; then
     warn "$INSTALL_ERRORS non-critical package(s) could not be installed."
     warn "Core SQM should work, but some UI features may be degraded."
 fi
 
 # =============================================================================
-# Install: LuCI DSCP Connections view
+# Install: LuCI pages under Network → SQM QoS
+# (SQM, Connections, Server Rules, Server History, Captures, Lag Simulator)
 # =============================================================================
-info "Installing LuCI DSCP Connections view"
+info "Installing LuCI pages (SQM QoS tabs)"
 
 do_run mkdir -p /usr/libexec/rpcd
 do_run mkdir -p /usr/share/luci/menu.d
@@ -250,7 +287,15 @@ do_run mkdir -p /www/luci-static/resources/view/dscp
 do_run cp connections/rpcd/luci.dscp /usr/libexec/rpcd/luci.dscp
 do_run chmod 0755 /usr/libexec/rpcd/luci.dscp
 
-# JSON menus (tolerant if directory is empty)
+# Menu of 1.x (separate "DSCP" entry) replaced by the SQM QoS tabs
+if [ -f /usr/share/luci/menu.d/luci-app-dscp.json ]; then
+    do_run rm -f /usr/share/luci/menu.d/luci-app-dscp.json
+    info "Old DSCP menu entry removed (now tabs under SQM QoS)"
+fi
+
+# JSON menus (tolerant if directory is empty). The menu file name must sort
+# after luci-app-sqm.json: LuCI merges menu.d files in name order and ours
+# turns "SQM QoS" into a tabbed entry.
 for f in connections/menu/*.json; do
     [ -f "$f" ] && do_run cp "$f" /usr/share/luci/menu.d/
 done
@@ -261,7 +306,93 @@ for f in connections/view/*.js; do
     [ -f "$f" ] && do_run cp "$f" /www/luci-static/resources/view/dscp/
 done
 
-ok "DSCP Connections view installed"
+ok "LuCI pages installed"
+
+# =============================================================================
+# Install: Server Rules (block remote server ranges, nft table inet serverrules)
+# =============================================================================
+info "Installing Server Rules"
+
+do_run mkdir -p /usr/libexec/serverrules
+do_run cp serverrules/serverrules.sh /usr/libexec/serverrules/serverrules.sh
+do_run chmod 0755 /usr/libexec/serverrules/serverrules.sh
+do_run cp serverrules/serverrules.init /etc/init.d/serverrules
+do_run chmod 0755 /etc/init.d/serverrules
+if [ -f /etc/config/serverrules ]; then
+    info "Existing /etc/config/serverrules kept"
+else
+    do_run cp serverrules/serverrules.config /etc/config/serverrules
+fi
+
+ok "Server Rules installed"
+
+# =============================================================================
+# Install: Lag Simulator (netem per device, by MAC)
+# Skipped when the standalone lagsim package is installed: its files are the
+# same paths and stay owned by the package.
+# =============================================================================
+LAGSIM_PKG=0
+if [ "$DRY_RUN" = "0" ] && pkg_installed lagsim; then
+    LAGSIM_PKG=1
+    warn "Package 'lagsim' is installed — its files are kept, the Lag Simulator tab uses them"
+else
+    info "Installing Lag Simulator"
+    do_run cp lagsim/lagsim.sh /usr/sbin/lagsim
+    do_run chmod 0755 /usr/sbin/lagsim
+    do_run cp lagsim/lagsim.init /etc/init.d/lagsim
+    do_run chmod 0755 /etc/init.d/lagsim
+    do_run mkdir -p /etc/hotplug.d/net
+    do_run cp lagsim/lagsim.hotplug /etc/hotplug.d/net/30-lagsim
+    do_run mkdir -p /usr/lib/tc
+    for f in lagsim/tc-dists/*.dist; do
+        [ -f "$f" ] && do_run cp "$f" /usr/lib/tc/
+    done
+    if [ -f /etc/config/lagsim ]; then
+        info "Existing /etc/config/lagsim kept"
+    else
+        do_run cp lagsim/lagsim.config /etc/config/lagsim
+    fi
+    ok "Lag Simulator installed (disabled until enabled in LuCI)"
+fi
+
+# =============================================================================
+# Install: Bootstrap Dark Blue LuCI theme (Apache-2.0, derived from LuCI's
+# bootstrap theme). Registered only: the active theme is left as it is, pick
+# it in System → System → Language and Style. Skipped when the package
+# luci-theme-bootstrap-darkblue is installed.
+# =============================================================================
+if [ "$DRY_RUN" = "0" ] && pkg_installed luci-theme-bootstrap-darkblue; then
+    info "Package 'luci-theme-bootstrap-darkblue' installed — theme files kept"
+else
+    info "Installing Bootstrap Dark Blue theme (not activated)"
+    do_run mkdir -p /www/luci-static/bootstrap-darkblue \
+        /www/luci-static/resources/view/bootstrap-darkblue \
+        /usr/share/ucode/luci/template/themes/bootstrap-darkblue
+    for f in theme/darkblue/htdocs/luci-static/bootstrap-darkblue/*; do
+        [ -f "$f" ] && do_run cp "$f" /www/luci-static/bootstrap-darkblue/
+    done
+    do_run cp theme/darkblue/htdocs/luci-static/resources/menu-bootstrap-darkblue.js /www/luci-static/resources/
+    do_run cp theme/darkblue/htdocs/luci-static/resources/view/bootstrap-darkblue/sysauth.js /www/luci-static/resources/view/bootstrap-darkblue/
+    for f in theme/darkblue/ucode/template/themes/bootstrap-darkblue/*.ut; do
+        [ -f "$f" ] && do_run cp "$f" /usr/share/ucode/luci/template/themes/bootstrap-darkblue/
+    done
+    if [ "$DRY_RUN" = "0" ]; then
+        uci -q get luci.themes.BootstrapDarkBlue >/dev/null || {
+            uci set luci.themes.BootstrapDarkBlue=/luci-static/bootstrap-darkblue
+            uci commit luci
+        }
+    else
+        info "[DRY-RUN] uci set luci.themes.BootstrapDarkBlue=/luci-static/bootstrap-darkblue"
+    fi
+    ok "Theme installed — select it in System → System → Language and Style"
+fi
+
+# Spectra marks DSCP with its own nftables table: both together would mark
+# the same traffic twice.
+if [ "$DRY_RUN" = "0" ] && pkg_installed spectra; then
+    warn "Package 'spectra' is installed: it also marks DSCP. Disable or remove it"
+    warn "→ apk del luci-app-spectra spectra"
+fi
 
 # =============================================================================
 # Install: SQM configuration
@@ -277,10 +408,19 @@ SQM_CFG_REPLACED=0
 # rates shipped in sqm.config.
 PREV_DOWNLOAD=""
 PREV_UPLOAD=""
+# Priority devices and ports of the config being replaced (user data, empty by
+# default in sqm.config). Read under the 2.0.0 name, else under the 1.x name.
+KEEP_OPTIONS="priority_ip:gaming_ip priority_ip6:gaming_ip6 priority_udp_ports:gaming_udp_ports priority_tcp_ports:gaming_tcp_ports"
+PREV_KEEP=""
 if [ "$DRY_RUN" = "0" ] && [ -f /etc/config/sqm ]; then
     if [ "$(uci -q get sqm.@queue[0].script)" = "Seg_Layer_Cake.qos" ]; then
         PREV_DOWNLOAD="$(uci -q get sqm.@queue[0].download)"
         PREV_UPLOAD="$(uci -q get sqm.@queue[0].upload)"
+        for _pair in $KEEP_OPTIONS; do
+            _new="${_pair%%:*}"; _old="${_pair#*:}"
+            _val="$(uci -q get "sqm.@queue[0].$_new")" || _val="$(uci -q get "sqm.@queue[0].$_old")" || _val=""
+            [ -n "$_val" ] && PREV_KEEP="$PREV_KEEP $_new=$_val"
+        done
     fi
 fi
 
@@ -318,7 +458,7 @@ backup_active_sqm() {
 
 if [ "$DRY_RUN" = "0" ]; then
     if [ -f /etc/config/sqm ] && [ ! -f /etc/config/sqm.orig ]; then
-        if cmp -s /etc/config/sqm Gaming_Dscp/sqm.config; then
+        if cmp -s /etc/config/sqm sqm/sqm.config; then
             info "Existing /etc/config/sqm is already the custom version — skipping backup"
         else
             info "Backing up existing SQM config → /etc/config/sqm.orig"
@@ -334,7 +474,7 @@ if [ "$DRY_RUN" = "0" ]; then
             [oOyY])
                 if backup_active_sqm; then
                     info "Replacing SQM config"
-                    cp Gaming_Dscp/sqm.config /etc/config/sqm
+                    cp sqm/sqm.config /etc/config/sqm
                     SQM_CFG_REPLACED=1
                 else
                     warn "SQM config kept — backup failed"
@@ -346,14 +486,49 @@ if [ "$DRY_RUN" = "0" ]; then
         esac
     else
         if backup_active_sqm; then
-            cp Gaming_Dscp/sqm.config /etc/config/sqm
+            cp sqm/sqm.config /etc/config/sqm
             SQM_CFG_REPLACED=1
         else
             warn "SQM config kept — backup failed"
         fi
     fi
 else
-    info "[DRY-RUN] Copy Gaming_Dscp/sqm.config → /etc/config/sqm"
+    info "[DRY-RUN] Copy sqm/sqm.config → /etc/config/sqm"
+fi
+
+# =============================================================================
+# Migrate option names renamed in 2.0.0 (old name -> new name), on every
+# SQM queue section. The value moves to the new name; the old one is removed.
+# An option already set under its new name is left as it is.
+# =============================================================================
+LEGACY_OPTIONS="gaming_ip:priority_ip gaming_ip6:priority_ip6 gaming_udp_ports:priority_udp_ports gaming_tcp_ports:priority_tcp_ports gaming_bulk_enable:bulk_enable gaming_bulk_dscp:bulk_dscp"
+
+migrate_legacy_options() {
+    [ -f /etc/config/sqm ] || return 0
+    _moved=0
+    for _sec in $(uci -q show sqm | sed -n "s/^sqm\.\([^.=]*\)=queue$/\1/p"); do
+        for _pair in $LEGACY_OPTIONS; do
+            _old="${_pair%%:*}"; _new="${_pair#*:}"
+            _val="$(uci -q get "sqm.$_sec.$_old")" || continue
+            if [ -z "$(uci -q get "sqm.$_sec.$_new")" ]; then
+                uci set "sqm.$_sec.$_new=$_val"
+            fi
+            uci delete "sqm.$_sec.$_old"
+            _moved=$((_moved + 1))
+        done
+    done
+    if [ "$_moved" -gt 0 ]; then
+        uci commit sqm
+        ok "Migrated $_moved option(s) to their 2.0.0 names"
+    else
+        info "No option to migrate"
+    fi
+}
+
+if [ "$DRY_RUN" = "0" ]; then
+    migrate_legacy_options
+else
+    info "[DRY-RUN] Migrate renamed options in /etc/config/sqm (if any)"
 fi
 
 # =============================================================================
@@ -362,7 +537,7 @@ fi
 info "Installing SQM script Seg_Layer_Cake.qos (v$VERSION)"
 
 do_run mkdir -p /usr/lib/sqm
-do_run cp Gaming_Dscp/Seg_Layer_Cake.qos /usr/lib/sqm/Seg_Layer_Cake.qos
+do_run cp sqm/Seg_Layer_Cake.qos /usr/lib/sqm/Seg_Layer_Cake.qos
 do_run chmod 0755 /usr/lib/sqm/Seg_Layer_Cake.qos
 
 ok "Seg_Layer_Cake.qos installed"
@@ -384,7 +559,7 @@ do_run mkdir -p /www/luci-static/resources/view/network
 if [ "$DRY_RUN" = "0" ]; then
     if [ -f /www/luci-static/resources/view/network/sqm.js ] && \
        [ ! -f /www/luci-static/resources/view/network/sqm.js.orig ]; then
-        if cmp -s /www/luci-static/resources/view/network/sqm.js Gaming_Dscp/sqm.js; then
+        if cmp -s /www/luci-static/resources/view/network/sqm.js sqm/sqm.js; then
             info "Existing sqm.js is already the custom version — skipping backup"
         else
             info "Backing up original sqm.js → sqm.js.orig"
@@ -392,9 +567,9 @@ if [ "$DRY_RUN" = "0" ]; then
                /www/luci-static/resources/view/network/sqm.js.orig
         fi
     fi
-    cp Gaming_Dscp/sqm.js /www/luci-static/resources/view/network/sqm.js
+    cp sqm/sqm.js /www/luci-static/resources/view/network/sqm.js
 else
-    info "[DRY-RUN] Copy Gaming_Dscp/sqm.js → /www/luci-static/resources/view/network/sqm.js"
+    info "[DRY-RUN] Copy sqm/sqm.js → /www/luci-static/resources/view/network/sqm.js"
 fi
 
 ok "LuCI SQM view installed"
@@ -473,6 +648,12 @@ if [ "$DRY_RUN" = "0" ] && [ "$SQM_CFG_REPLACED" = "1" ]; then
         warn "→ Set your measured rates in LuCI: Network → SQM QoS → Basic Settings"
     fi
 
+    # Values never hold spaces (IP / port lists are comma separated)
+    for _kv in $PREV_KEEP; do
+        uci set "sqm.@queue[0].$_kv"
+        ok "Kept from the previous install: ${_kv%%=*}"
+    done
+
     uci commit sqm
     ok "SQM UCI configuration applied"
 elif [ "$DRY_RUN" = "0" ]; then
@@ -512,10 +693,28 @@ if [ "$DRY_RUN" = "0" ]; then
         fi
     fi
 
+    if [ -x /etc/init.d/serverrules ]; then
+        /etc/init.d/serverrules enable
+        # start, not restart: no procd instance, so the stop half of restart
+        # prints "Command failed: ... (Not found)". start reloads the rules.
+        /etc/init.d/serverrules start && ok "Server Rules started" || \
+            warn "Server Rules did not start — check: /usr/libexec/serverrules/serverrules.sh"
+    fi
+    if [ "$LAGSIM_PKG" = "0" ] && [ -x /etc/init.d/lagsim ]; then
+        # start registers the reload trigger with procd: without it, Save &
+        # Apply in LuCI changes /etc/config/lagsim but nothing is applied.
+        # Harmless while disabled (apply only tears down).
+        /etc/init.d/lagsim enable
+        /etc/init.d/lagsim start
+        ok "Lag Simulator service enabled"
+    fi
+
+    # LuCI caches the menu tree; drop it so the new tabs show up at once
+    rm -f /tmp/luci-indexcache* 2>/dev/null || true
     [ -x /etc/init.d/rpcd ]   && /etc/init.d/rpcd restart   && ok "rpcd restarted"
     [ -x /etc/init.d/uhttpd ] && /etc/init.d/uhttpd restart && ok "uhttpd restarted"
 else
-    info "[DRY-RUN] Restart sqm / rpcd / uhttpd skipped"
+    info "[DRY-RUN] Start serverrules, enable lagsim, restart sqm / rpcd / uhttpd skipped"
 fi
 
 # =============================================================================
@@ -542,8 +741,8 @@ printf "  1. LuCI → Network → SQM QoS\n"
 printf "     → Verify the WAN interface\n"
 printf "     → Configure download / upload bandwidth\n"
 printf "     → Configure Link layer / overhead\n"
-printf "  2. LuCI → Network → DSCP → Connections\n"
-printf "     → Real-time connection view (with Flush Conntrack button)\n"
+printf "  2. LuCI → Network → SQM QoS → tabs\n"
+printf "     → Connections, Server Rules, Server History, Captures, Lag Simulator\n"
 if [ -f /root/dscp-validate.sh ] || [ -f tools/dscp-validate.sh ]; then
     printf "  3. Validate the install:\n"
     printf "     /root/dscp-validate.sh\n"

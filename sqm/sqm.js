@@ -286,15 +286,15 @@ return view.extend({
                           'is classified.');
 
         // --- Priority IPs ---
-        o = s.taboption('tab_dscp', form.Value, 'gaming_ip',
+        o = s.taboption('tab_dscp', form.Value, 'priority_ip',
             _('Priority device IPv4 address(es)'));
         o.placeholder = '192.168.1.100,192.168.1.101';
         o.rmempty     = true;
         o.validate    = validateIPv4List;
         o.description = _('One or more IPv4 addresses or prefixes of latency-sensitive devices ' +
-                          '(console, gaming PC, VoIP phone, workstation...), separated by commas.');
+                          '(console, PC, VoIP phone, workstation...), separated by commas.');
 
-        o = s.taboption('tab_dscp', form.Value, 'gaming_ip6',
+        o = s.taboption('tab_dscp', form.Value, 'priority_ip6',
             _('Priority device IPv6 address(es) or prefix(es)'));
         o.placeholder = 'fd00::100,fd00::101';
         o.rmempty     = true;
@@ -309,7 +309,7 @@ return view.extend({
         o.rmempty     = false;
         o.description = _('Rule 1 of 4. Marks UDP traffic from/to the priority devices above, ' +
                           'on the specified ports, with the selected DSCP value. ' +
-                          'Suitable for gaming, VoIP, real-time apps.');
+                          'Suitable for VoIP, video calls and other real-time apps.');
 
         o = s.taboption('tab_dscp', form.ListValue, 'priority_udp_dscp',
             _('Priority DSCP — UDP'));
@@ -335,15 +335,15 @@ return view.extend({
                           'CS4 only reaches the Voice tier on diffserv4 and diffserv8 — on ' +
                           'diffserv3, the sqm-scripts default, it falls into Best Effort.');
 
-        o = s.taboption('tab_dscp', form.Value, 'gaming_udp_ports',
+        o = s.taboption('tab_dscp', form.Value, 'priority_udp_ports',
             _('Priority UDP ports'));
         o.placeholder = '3659,3074,3478-3480,10000-45000';
         o.rmempty     = true;
         o.depends('priority_udp_enable', '1');
         o.validate    = validatePortList;
         o.description = _('Comma-separated ports or ranges used by latency-sensitive UDP applications. ' +
-                          'Common values: consoles and PC games 3074, 3478-3480, 3659 and the wide ' +
-                          '10000-45000 range many titles pick from; WireGuard 51820; OpenVPN 1194; ' +
+                          'Common values: consoles 3074, 3478-3480, 3659 and the wide ' +
+                          '10000-45000 range many real-time apps pick from; WireGuard 51820; OpenVPN 1194; ' +
                           'IPsec/IKEv2 500 and 4500; Teams and Zoom media 3478-3481 plus ' +
                           '50000-50059. A VPN tunnel is a single flow for CAKE, so everything ' +
                           'inside it gets the class you set here, downloads included.');
@@ -368,28 +368,73 @@ return view.extend({
         o.value('af31', _('AF31 — Multimedia streaming (→ Video tier)'));
         o.value('cs3',  _('CS3 — Broadcast / Signaling (→ Video tier)'));
         o.value('cs2',  _('CS2 — OAM / network mgmt (→ Video tier)'));
-        o.value('cs0',  _('CS0 — Default (→ Best Effort) ★ recommended for TCP gaming'));
+        o.value('cs0',  _('CS0 — Default (→ Best Effort) ★ recommended for login/control TCP'));
         o.default     = 'cs0';
         o.rmempty     = false;
         o.depends('priority_tcp_enable', '1');
         o.description = _('DSCP value applied to matched TCP traffic. ' +
-                          'CS0 is the default: gaming TCP (login/auth) shouldn\'t compete with ' +
+                          'CS0 is the default: login and control TCP shouldn\'t compete with ' +
                           'real-time UDP. Pick AF41 instead for remote desktop or video ' +
                           'conferencing, where the TCP flow is the latency-sensitive one.');
 
-        o = s.taboption('tab_dscp', form.Value, 'gaming_tcp_ports',
+        o = s.taboption('tab_dscp', form.Value, 'priority_tcp_ports',
             _('Priority TCP ports'));
         o.placeholder = '3074,3659';
         o.rmempty     = true;
         o.depends('priority_tcp_enable', '1');
         o.validate    = validatePortList;
         o.description = _('Comma-separated TCP ports used by latency-sensitive applications. ' +
-                          'Common values: remote desktop 3389; game login and session ports such ' +
+                          'Common values: remote desktop 3389; console login and session ports such ' +
                           'as 3074 and 3659. Bulk TCP (patch downloads, cloud sync) does not ' +
                           'belong here — see the Bulk rule below.');
 
+        // ==== Size tiers (2.0.0) ====
+        o = s.taboption('tab_dscp', form.Flag, 'priority_size_tiers',
+            _('Size tiers on priority traffic'));
+        o.default     = '0';
+        o.rmempty     = false;
+        o.description = _('Refines rules 1 and 2 by packet size. UDP: small packets keep the class above, ' +
+                          'medium packets get the medium class below, large packets go to the Bulk class. ' +
+                          'TCP: packets above the small size go to the Bulk class. ' +
+                          'Large packets on a priority port are transfers (updates, downloads inside the ' +
+                          'application), not real-time traffic. Off by default.');
+
+        o = s.taboption('tab_dscp', form.Value, 'priority_size_small',
+            _('Small packet size (bytes)'));
+        o.datatype    = 'range(1,1498)';
+        o.placeholder = '160';
+        o.default     = '160';
+        o.depends('priority_size_tiers', '1');
+        o.description = _('Packets up to this size keep the priority class (160 covers most ' +
+                          'real-time state updates and voice frames).');
+
+        o = s.taboption('tab_dscp', form.Value, 'priority_size_medium',
+            _('Medium packet size (bytes)'));
+        o.datatype    = 'range(2,1499)';
+        o.placeholder = '1300';
+        o.default     = '1300';
+        o.depends('priority_size_tiers', '1');
+        o.validate    = function(section_id, value) {
+            var small = parseInt(this.section.formvalue(section_id, 'priority_size_small') || '160', 10);
+            if (value && parseInt(value, 10) <= small)
+                return _('Must be larger than the small packet size.');
+            return true;
+        };
+        o.description = _('UDP packets between the small size and this size get the medium class; ' +
+                          'larger ones go to the Bulk class.');
+
+        o = s.taboption('tab_dscp', form.ListValue, 'priority_medium_dscp',
+            _('DSCP for medium UDP packets'));
+        o.value('cs4',  _('CS4 — Real-time interactive (→ Voice tier)'));
+        o.value('af41', _('AF41 — Interactive video (→ Video tier)'));
+        o.value('cs3',  _('CS3 — Broadcast / Signaling (→ Video tier)'));
+        o.value('af21', _('AF21 — Low-latency data (→ Video tier)'));
+        o.value('cs0',  _('CS0 — Default (→ Best Effort)'));
+        o.default     = 'cs4';
+        o.depends('priority_size_tiers', '1');
+
         // ==== Bulk ====
-        o = s.taboption('tab_dscp', form.Flag, 'gaming_bulk_enable',
+        o = s.taboption('tab_dscp', form.Flag, 'bulk_enable',
             _('Enable bulk traffic classification'));
         o.default     = '0';
         o.rmempty     = false;
@@ -399,7 +444,7 @@ return view.extend({
                           'Big HTTPS Auto-Downgrade, so browsing stays responsive while ' +
                           'large downloads are deprioritized.');
 
-        o = s.taboption('tab_dscp', form.ListValue, 'gaming_bulk_dscp',
+        o = s.taboption('tab_dscp', form.ListValue, 'bulk_dscp',
             _('Bulk traffic DSCP'));
         o.value('cs1',  _('CS1 — Background / Bulk ★ recommended'));
         o.value('lephb',_('LEPHB — Lower Effort PHB (RFC8622, modern bulk)'));
@@ -409,7 +454,7 @@ return view.extend({
         o.value('cs0',  _('CS0 — Default (→ Best Effort, no deprioritization)'));
         o.default     = 'cs1';
         o.rmempty     = true;
-        o.depends('gaming_bulk_enable', '1');
+        o.depends('bulk_enable', '1');
         o.description = _('DSCP value applied to bulk download traffic from priority devices. ' +
                           'CS1 is the classical choice. LEPHB (RFC8622) is the modern equivalent ' +
                           'specifically designed for "scavenger" traffic that yields to everything else.');
@@ -418,7 +463,7 @@ return view.extend({
             _('Bulk TCP ports'));
         o.placeholder = '80,8080';
         o.rmempty     = true;
-        o.depends('gaming_bulk_enable', '1');
+        o.depends('bulk_enable', '1');
         o.validate    = validatePortList;
         o.description = _('TCP ports of the priority devices sent to the Bulk DSCP. ' +
                           'Leave 443 out to let Big HTTPS Auto-Downgrade below decide ' +
@@ -430,7 +475,7 @@ return view.extend({
             _('Bulk UDP ports'));
         o.placeholder = '';
         o.rmempty     = true;
-        o.depends('gaming_bulk_enable', '1');
+        o.depends('bulk_enable', '1');
         o.validate    = validatePortList;
         o.description = _('UDP ports of the priority devices sent to the Bulk DSCP. ' +
                           'Empty falls back to the Browsing UDP ports, the pre-1.8.0 ' +
@@ -441,7 +486,7 @@ return view.extend({
             _('Enable big HTTPS auto-downgrade'));
         o.default     = '1';
         o.rmempty     = false;
-        o.depends('gaming_bulk_enable', '1');
+        o.depends('bulk_enable', '1');
         o.description = _('Downgrades large HTTPS packets (&gt;1000 bytes) from priority devices ' +
                           'to the Bulk DSCP value — the per-packet half of the Bulk rule. ' +
                           'It has no effect on ports already listed above, so keep 443 out of ' +
@@ -483,7 +528,7 @@ return view.extend({
         o.value('cs0',  _('CS0 — Default (→ Best Effort, no marking benefit)'));
         o.value('af13', _('AF13 — Low-priority data, high drop (→ Best Effort tier)'));
         o.value('af12', _('AF12 — Low-priority data, medium drop (→ Best Effort tier)'));
-        o.value('af11', _('AF11 — Low-priority data (→ Best Effort tier) ★ gaming-first'));
+        o.value('af11', _('AF11 — Low-priority data (→ Best Effort tier) ★ real-time first'));
         o.value('cs1',  _('CS1 — Background / Bulk (→ Bulk tier)'));
         o.value('lephb',_('LEPHB — Lower Effort PHB (RFC8622, → Bulk tier, modern)'));
         o.default     = 'af21';
@@ -492,12 +537,60 @@ return view.extend({
         o.description = _('DSCP value applied to web browsing traffic. ' +
                           '<br><b>Tier mapping (diffserv4):</b> ' +
                           'AF2x/AF3x/CS2/CS3 → Video • CS0/AF1x → Best Effort • CS1/LEPHB → Bulk. ' +
-                          '<br><b>For gaming-first setups:</b> use AF11 to keep browsing in Best Effort, ' +
+                          '<br><b>For real-time-first setups:</b> use AF11 to keep browsing in Best Effort, ' +
                           'below the Video and Voice tiers. ' +
                           '<br><b>For browsing-priority setups:</b> use AF21 (default) to boost web ' +
                           'over bulk downloads. ' +
                           '<br><b>For deprioritization:</b> use CS1 or LEPHB to push browsing below ' +
                           'Best Effort.');
+
+        // ==== Network-wide services (2.0.0) ====
+        o = s.taboption('tab_dscp', form.DummyValue, '_svc_header');
+        o.rawhtml = true;
+        o.cfgvalue = function() {
+            return '<strong>' + _('Network-wide services') + '</strong><br>' +
+                   _('These apply to every device on the network. Each one only marks traffic that ' +
+                     'is still CS0, so a mark set by an application or by the priority rules is kept. ' +
+                     'All off by default.');
+        };
+
+        o = s.taboption('tab_dscp', form.ListValue, 'svc_icmp_dscp',
+            _('ICMP (ping)'));
+        o.value('cs0',  _('Not marked'));
+        o.value('cs3',  _('CS3 — Broadcast / Signaling (→ Video tier)'));
+        o.value('cs5',  _('CS5 — Signaling (→ Voice tier)'));
+        o.default     = 'cs0';
+
+        o = s.taboption('tab_dscp', form.Flag, 'svc_dns',
+            _('DNS and NTP → CS3'));
+        o.default     = '0';
+        o.rmempty     = false;
+        o.description = _('DNS 53, DNS over TLS 853, mDNS 5353, NTP 123.');
+
+        o = s.taboption('tab_dscp', form.Flag, 'svc_ssh',
+            _('SSH → AF41'));
+        o.default     = '0';
+        o.rmempty     = false;
+        o.description = _('TCP 22, for remote administration sessions.');
+
+        o = s.taboption('tab_dscp', form.Flag, 'svc_conferencing',
+            _('Video conferencing → AF41'));
+        o.default     = '0';
+        o.rmempty     = false;
+        o.description = _('Teams 3478-3481 and 50000-50059, Zoom 8801-8810, Webex 9000 (UDP); ' +
+                          'TURN over TLS 5349, Webex 5004, Zoom 8801-8802 (TCP).');
+
+        o = s.taboption('tab_dscp', form.Flag, 'svc_live_video',
+            _('Live video streaming → AF41'));
+        o.default     = '0';
+        o.rmempty     = false;
+        o.description = _('RTMP 1935-1936 and related ingest ports 2396, 2935 (TCP).');
+
+        o = s.taboption('tab_dscp', form.Flag, 'svc_voip',
+            _('VoIP telephony → EF'));
+        o.default     = '0';
+        o.rmempty     = false;
+        o.description = _('SIP 5060-5061, IPsec/IKE 500 and 4500 used by Wi-Fi calling (UDP); SIP 5060-5061 (TCP).');
 
 
         // ==================================================================

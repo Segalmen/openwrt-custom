@@ -1,5 +1,60 @@
 # Changelog
 
+## [2.0.0] — 2026-11-10
+
+### Changed
+- **Option names are neutral, and old configs are migrated.** The device,
+  port and bulk options now read `priority_ip`, `priority_ip6`,
+  `priority_udp_ports`, `priority_tcp_ports`, `bulk_enable` and `bulk_dscp`.
+  `install.sh` moves the 1.x values to the new names on every SQM queue, and
+  when the config is overwritten it keeps the priority devices and ports, as it
+  already kept the bandwidth. LuCI labels follow ("Priority device IPv4
+  address(es)", etc.).
+- **Priority devices and ports ship empty.** The field descriptions give
+  examples (console, PC, VoIP phone, Teams, Zoom, Webex) instead of defaults
+  aimed at one use. With the lists empty the rules match nothing until set.
+- **LuCI pages are tabs of Network → SQM QoS.** SQM, Connections, Server
+  Rules, Server History, Captures and Lag Simulator sit side by side. The 1.x
+  "Network → DSCP" entry is removed by the installer. The tabs come from a
+  separate menu file; `luci-app-sqm` is not modified and gets its original
+  menu back on uninstall.
+- **Connections table follows the theme's text size.** At 100% it used the
+  browser's base size and cut the port off long IPv4 and IPv6 addresses.
+
+### Added
+- **Size tiers on priority traffic** (off by default). UDP: small packets keep
+  the priority class, medium ones get a medium class (`CS4` by default),
+  large ones go to Bulk. TCP: packets above the small threshold go to Bulk.
+- **Network-wide services** (off by default): ICMP, DNS/NTP, SSH, video
+  conferencing, live video and VoIP, each marking only traffic still at CS0.
+- **Server Rules**: named IPv4 ranges, blocked in both directions when
+  enabled, labels only when disabled. Ban and Label buttons in Connections
+  suggest the real BGP prefix of the server (RIPEstat). New rules are created
+  disabled. Rule names accept letters, digits and `_`; spaces become `_`.
+- **Server History**: servers recorded with the Log button, with the rule
+  that covers them today.
+- **Captures**: tcpdump from LuCI (priority ports, one server or one IP),
+  kept in RAM and downloaded through the authenticated session.
+- **Lag Simulator**: latency, jitter and loss per device (netem, by MAC),
+  off by default. The standalone `lagsim` package is used when installed.
+- **Bootstrap Dark Blue theme**, installed and registered but not activated.
+- **License and credits.** The project is now explicitly GPL-3.0-or-later
+  (`LICENSE`). The Connections view and its rpcd backend credit
+  [luci-app-qosmate](https://github.com/hudra0/luci-app-qosmate) by hudra0,
+  which they are derived from; the README lists the other sources.
+
+### Fixed
+- **The Flush Conntrack button did nothing with several priority devices.**
+  The backend took the comma-separated list as one address and rejected it.
+  Each address is now flushed on its own.
+- **The validator now covers 2.0.0 and several priority devices.** New
+  sections for size tiers, services, Server Rules and the Lag Simulator, in
+  rule order. Conntrack counts are given per priority device instead of
+  failing on a comma-separated list, and the ctinfo check looks for the real
+  module name (`act_ctinfo`) plus the filter on the WAN ingress.
+- **Restarting SQM logged a `tc` error** (`Cannot delete qdisc with handle of
+  zero`) while removing a qdisc that did not exist yet on the IFB.
+
 ## [1.8.2] — 2026-09-30
 
 ### Changed

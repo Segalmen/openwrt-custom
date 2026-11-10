@@ -1,0 +1,75 @@
+{
+    "admin/network/sqm": {
+        "action": {
+            "type": "firstchild"
+        }
+    },
+    "admin/network/sqm/settings": {
+        "title": "SQM",
+        "order": 10,
+        "action": {
+            "type": "view",
+            "path": "network/sqm"
+        },
+        "depends": {
+            "acl": [ "luci-app-sqm" ]
+        }
+    },
+    "admin/network/sqm/connections": {
+        "title": "Connections",
+        "order": 20,
+        "action": {
+            "type": "view",
+            "path": "dscp/connections"
+        },
+        "depends": {
+            "acl": [ "luci-app-dscp" ]
+        }
+    },
+    "admin/network/sqm/serverrules": {
+        "title": "Server Rules",
+        "order": 30,
+        "action": {
+            "type": "view",
+            "path": "dscp/serverrules"
+        },
+        "depends": {
+            "acl": [ "luci-app-dscp" ],
+            "uci": { "serverrules": true }
+        }
+    },
+    "admin/network/sqm/history": {
+        "title": "Server History",
+        "order": 40,
+        "action": {
+            "type": "view",
+            "path": "dscp/history"
+        },
+        "depends": {
+            "acl": [ "luci-app-dscp" ]
+        }
+    },
+    "admin/network/sqm/captures": {
+        "title": "Captures",
+        "order": 50,
+        "action": {
+            "type": "view",
+            "path": "dscp/captures"
+        },
+        "depends": {
+            "acl": [ "luci-app-dscp" ]
+        }
+    },
+    "admin/network/sqm/lagsim": {
+        "title": "Lag Simulator",
+        "order": 60,
+        "action": {
+            "type": "view",
+            "path": "dscp/lagsim"
+        },
+        "depends": {
+            "acl": [ "luci-app-dscp" ],
+            "uci": { "lagsim": true }
+        }
+    }
+}

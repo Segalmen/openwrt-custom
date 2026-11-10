@@ -3,8 +3,8 @@
 Custom SQM setup for OpenWrt using **CAKE**, **DSCP**, and **nftables**,
 designed to improve latency-sensitive traffic prioritization.
 
-Works great for gaming, VoIP, video conferencing, streaming — any real-time
-application that benefits from low and stable latency.
+Works for VoIP, video conferencing, remote desktop, consoles, streaming — any
+real-time application that benefits from low and stable latency.
 
 This project provides:
 
@@ -13,10 +13,17 @@ This project provides:
 - Traffic classification with priority rules and bulk downgrade
 - Download classification through kernel `ctinfo` DSCP restore
 - Automated installer with dependency handling
-- LuCI custom view with real-time DSCP Connections monitor
-- One-click conntrack flush button for the priority device
+- Optional size tiers on priority traffic and network-wide service classes
+  (DNS, SSH, video conferencing, live video, VoIP)
+- LuCI tabs under **Network → SQM QoS**: SQM, Connections, Server Rules,
+  Server History, Captures, Lag Simulator
+- One-click conntrack flush button for the priority devices
+- Server Rules: block remote server ranges, or name them as labels
+- Packet captures (tcpdump) from LuCI, downloaded through the web interface
+- Lag Simulator: added latency, jitter and loss per device (netem)
 - Diagnostic tool to validate the full DSCP / SQM / CAKE pipeline
 - **Tier-aware DSCP dropdowns** with full coverage of all CAKE tiers
+- Optional **Bootstrap Dark Blue** LuCI theme (installed, not activated)
 
 ---
 
@@ -46,14 +53,17 @@ restores the mark on download traffic before CAKE sees it.
 
 ### Rule order — read this first
 
-The four classification rules form a cascade. They are evaluated in the order
+The classification rules form a cascade. They are evaluated in the order
 below, and each one only sees what the previous ones left alone: a packet
-already marked is not re-marked, because the Browsing rule matches CS0 only.
+already marked is not re-marked, because the Services and Browsing rules match
+CS0 only.
 
 | # | Rule | What it matches | Typical result |
 |---|------|-----------------|----------------|
-| 1 | Priority UDP | priority devices, gaming UDP ports | Voice tier |
-| 2 | Priority TCP | priority devices, gaming TCP ports | your choice |
+| 1 | Priority UDP | priority devices, Priority UDP ports | Voice tier |
+| 2 | Priority TCP | priority devices, Priority TCP ports | your choice |
+| 2b | Size tiers (optional) | rules 1 and 2, by packet size | medium / Bulk tier |
+| 2c | Services (optional) | every device, service ports, still CS0 | per service |
 | 3 | Bulk | priority devices, Bulk port lists | Bulk tier |
 | 3b | Big HTTPS | priority devices, HTTPS packets > 1000 bytes | Bulk tier |
 | 4 | Browsing | anything still CS0 — in practice the rest of the LAN | Video tier |
@@ -67,7 +77,8 @@ sending large downloads to the Bulk tier.
 
 ### Priority UDP Classification
 Mark UDP traffic from/to priority devices on the specified ports with a
-configurable DSCP value. Suitable for gaming, VoIP, and real-time apps.
+configurable DSCP value. Suitable for VoIP, video calls and other real-time
+apps.
 
 The configured ports are matched on both sides of each flow: the local
 port (consoles and clients with a fixed local port) and the remote server
@@ -77,6 +88,28 @@ port (clients that use a random local port, common on PC).
 Mark TCP traffic from/to priority devices (optional), with the same
 local/remote port matching as Priority UDP.
 Useful for remote desktop, video conferencing signalling, etc.
+
+### Size tiers on priority traffic (optional, off by default)
+Refines rules 1 and 2 by packet size. UDP: packets up to the small threshold
+(default 160 bytes) keep the class set above, medium packets (up to 1300
+bytes) get the medium class (default `CS4`), larger ones go to the Bulk class.
+TCP: packets above the small threshold go to the Bulk class. A large packet
+on a priority port is a transfer (update, download inside the application),
+not real-time traffic.
+
+### Network-wide services (optional, off by default)
+Classes for every device on the network, each one marking only traffic that
+is still CS0, so a mark set by an application or by the priority rules is
+kept:
+
+- ICMP (ping) — not marked by default, `CS3` or `CS5` selectable
+- DNS and NTP → `CS3` (UDP 53, 853, 5353, 123; TCP 53, 853)
+- SSH → `AF41` (TCP 22)
+- Video conferencing → `AF41` (Teams, Zoom, Webex: UDP 3478-3481,
+  8801-8810, 9000, 50000-50059; TCP 5004, 5349, 8801-8802)
+- Live video streaming → `AF41` (RTMP, TCP 1935-1936, 2396, 2935)
+- VoIP telephony → `EF` (SIP 5060-5061 UDP/TCP; IPsec/IKE 500 and 4500 used
+  by Wi-Fi calling)
 
 ### Bulk Traffic Classification
 Mark the web traffic of priority devices with a lower DSCP value so it does
@@ -99,13 +132,12 @@ with Bulk enabled it applies to every device except the priority ones.
 
 ### Common ports per use case
 
-The shipped lists target gaming. For other latency-sensitive uses, add the
-ports below to the Priority lists — the option names say *gaming* for
-historical reasons, nothing in the rules is gaming-specific.
+The Priority device and port lists ship empty. Add the devices and ports of
+your own latency-sensitive uses; the table below gives common examples.
 
 | Use case | Ports |
 |----------|-------|
-| Consoles and PC games | UDP `3074`, `3478-3480`, `3659`, often somewhere in `10000-45000` |
+| Consoles and PC clients | UDP `3074`, `3478-3480`, `3659`, often somewhere in `10000-45000` |
 | Remote desktop (RDP) | TCP `3389` |
 | WireGuard | UDP `51820` |
 | OpenVPN | UDP `1194` (can fall back to TCP, or to 443) |
@@ -114,8 +146,8 @@ historical reasons, nothing in the rules is gaming-specific.
 
 Two things worth knowing. A VPN tunnel is a **single flow** for CAKE, so
 everything inside it — a video call and a file download alike — gets the class
-you set for it. And the shipped UDP list stops at `3480`, so Teams screen
-sharing on `3481` is not covered unless you add it.
+you set for it. And Teams screen sharing uses `3481`: include it when you
+list the Teams ports.
 
 ---
 
@@ -129,7 +161,7 @@ memorizing the diffserv4 mapping.
 
 | CAKE Tier | DSCP values | Typical use |
 |-----------|-------------|-------------|
-| **Voice** (highest) | CS4, CS5, CS6, CS7, EF, VA | Real-time interactive, gaming, VoIP, network control |
+| **Voice** (highest) | CS4, CS5, CS6, CS7, EF, VA | Real-time interactive, VoIP, network control |
 | **Video** | CS2, CS3, AF2x, AF3x, AF4x | Multimedia, conferencing, streaming, OAM |
 | **Best Effort** | CS0, AF1x | Default traffic |
 | **Bulk** (lowest) | CS1, LEPHB | Background, scavenger, bulk downloads |
@@ -141,7 +173,7 @@ Source: the `diffserv4` table in the Linux kernel (`net/sched/sch_cake.c`).
 The `browsing_dscp` dropdown spans three tiers (Video, Best Effort, Bulk),
 with three recommended profiles:
 
-- **Gaming-first setup** → use `AF11` (browsing stays in Best Effort,
+- **Real-time-first setup** → use `AF11` (browsing stays in Best Effort,
   below the Video and Voice tiers)
 - **Browsing-priority setup** → use `AF21` (default, boosts web into the
   Video tier, above Best Effort and Bulk)
@@ -153,8 +185,8 @@ with three recommended profiles:
 | Dropdown | Recommended | Rationale |
 |----------|-------------|-----------|
 | Priority UDP | `EF` (default) | Voice tier on diffserv3, diffserv4 and diffserv8; Wi-Fi AC_VO |
-| Priority TCP | `CS0` (default) | Gaming TCP (auth, login) shouldn't compete with real-time UDP |
-| Browsing | `AF21` (default) or `AF11` (gaming-first) | See profiles above |
+| Priority TCP | `CS0` (default) | Login and control TCP shouldn't compete with real-time UDP |
+| Browsing | `AF21` (default) or `AF11` (real-time-first) | See profiles above |
 | Bulk | `CS1` | Classic background; `LEPHB` for the modern RFC8622 equivalent |
 
 ---
@@ -189,6 +221,11 @@ The following packages are required for full functionality
 - `lua` – required for rpcd backend
 - `luci-lib-jsonc` – JSON handling for LuCI / rpcd
 - `conntrack` – required for the Flush Conntrack button
+- `luci-lua-runtime` – Lua runtime used by the rpcd backend
+- `kmod-sched-flower`, `kmod-netem` – Lag Simulator (per-device netem)
+- `tcpdump` – packet captures
+- `ca-bundle` – HTTPS for the CIDR suggestion (RIPEstat); a TLS backend for
+  `uclient-fetch` (`libustream-mbedtls`) is added only when none is present
 
 ### Permissions
 - Root access on the router is required
@@ -219,7 +256,10 @@ The following packages are required for full functionality
 - Clean nftables setup and teardown hooks
 - Automatic dependency installation using **opkg** or **apk**
 - Robust installer with disk space check, WAN auto-detection, dry-run mode
-- **One-click conntrack flush** for the priority device (LuCI)
+- **One-click conntrack flush** for the priority devices (LuCI)
+- Optional **size tiers** on priority traffic and **network-wide services**
+- **Server Rules**, **Server History**, **Captures** and **Lag Simulator**
+  tabs (see below)
 - **Diagnostic tool** with full pipeline validation report
 
 ---
@@ -257,9 +297,17 @@ tc ingress (simple redirect — runs before prerouting)
 
 ---
 
-## DSCP Connections (LuCI)
+## LuCI tabs (Network → SQM QoS)
 
-This project also installs a **real-time DSCP Connections view** in LuCI.
+The installer turns **Network → SQM QoS** into a tabbed page. The first tab,
+**SQM**, is the SQM page itself with its four sub-tabs (Basic Settings, Queue
+Discipline, Link Layer Adaptation, DSCP Policies). The menu change lives in its
+own file (`luci-app-sqm_dscp.json`); `luci-app-sqm` itself is not modified, and
+uninstalling gives it its original menu back.
+
+### Connections
+
+A **real-time DSCP Connections view**.
 
 ### Features
 - Live conntrack-based connection monitoring
@@ -279,24 +327,67 @@ This project also installs a **real-time DSCP Connections view** in LuCI.
 - **Connection counter** with filter display (`X / Y total`)
 - Multi-term filter with AND logic (e.g. `192.168.1.100 udp ef`)
 - Column sorting
-- Zoom levels (50%–100%)
+- Zoom levels (50%–100%), relative to the theme's text size
 - **Flush Conntrack button** — clears active conntrack entries for the
-  priority device (IPv4 + IPv6) configured in DSCP Policies. Reads the IPs
+  priority devices (IPv4 + IPv6) configured in DSCP Policies. Reads the IPs
   dynamically from UCI, asks for confirmation, then displays the number of
   flushed flows. Useful after changing DSCP rules to force re-classification
   of in-flight connections.
+- Public destinations link to ipinfo.io, and show the name of the Server
+  Rules entry that covers them
+- Per-flow buttons:
+  - **⛔ Ban / ▶ Enable** — add the server's range to Server Rules, or
+    enable the rule that covers it. A new rule is always created disabled.
+  - **📌 Log** (priority flows) — record the server in Server History
+  - **🏷️ Label** (priority flows) — name the server's range as a disabled
+    rule (label only, no blocking)
+  - **📷 Ports / 📷 Full / 📷 Capture** — start a tcpdump capture: the
+    priority ports, all traffic with this server, or with this IP
+- The suggested range is the real BGP prefix announced for the IP
+  (RIPEstat), falling back to a /24 when the lookup fails. Always editable.
+- Rule names accept letters, digits and `_`; spaces typed become `_`.
 
-Location in LuCI: **Network → DSCP → Connections**
+### Server Rules
 
-This view is purely observational — the only action available (Flush
-Conntrack) explicitly requires user confirmation.
+Remote IPv4 ranges grouped in named rules (`/etc/config/serverrules`). An
+enabled rule drops traffic to and from its ranges (nftables table
+`inet serverrules`); a disabled rule is a label only, shown in Connections
+and Server History. **Enable blocking** turns all rules on or off at once.
+Private and reserved ranges are refused, in the page and in the script.
+
+### Server History
+
+Servers recorded with **📌 Log**, with the rule that covers them today, the
+port, the DSCP class and how many times they were logged
+(`/etc/sqm-dscp/server-history.jsonl`).
+
+### Captures
+
+Captures started from Connections, stored in RAM (`/tmp/dscp-captures`),
+never served publicly: download goes through the authenticated LuCI session.
+At most 300 seconds per capture, one capture per interface, four at once.
+Capture on `br-lan` to see the client IP, on the WAN device to see the DSCP
+marks as they leave the router.
+
+### Lag Simulator
+
+Adds latency, jitter and packet loss to selected devices, matched by MAC
+address, with netem (`/etc/config/lagsim`, off by default). It only makes a
+connection worse, never better, and does not touch the SQM qdiscs. *Both*
+splits the delay and jitter between the two directions, so a ping shows the
+value you set; loss applies in each direction, so a round trip loses about
+twice the value you set. When the standalone `lagsim`
+package is installed, its files are used and left in place.
+
+These pages only act on explicit clicks; Ban, Enable, Flush Conntrack and
+Clear all ask for confirmation.
 
 ---
 
 ## Diagnostic tool
 
 A standalone shell script is included to validate that all DSCP / SQM / CAKE
-policies are properly active. It produces a structured 15-section report
+policies are properly active. It produces a structured 19-section report
 showing rule counters, CAKE per-tin latency, conntrack health, and a final
 verdict.
 
@@ -306,13 +397,27 @@ verdict.
 # Generate a full report (with real IPs, hostname, and prefixes)
 /root/dscp-validate.sh
 
-# Save to a timestamped file (and display on screen)
-/root/dscp-validate.sh | tee /root/dscp-report-$(date +%Y%m%d-%H%M).txt
+# Save to a timestamped file in RAM (and display on screen)
+/root/dscp-validate.sh | tee /tmp/dscp-report-$(date +%Y%m%d-%H%M).txt
 
 # Anonymized mode — masks IPs, hostname, and IPv6 prefix
 # Recommended when sharing the report on forums, GitHub issues, etc.
 /root/dscp-validate.sh --anonymize | tee /tmp/report-public.txt
 ```
+
+Reports are written to `/tmp` (RAM): nothing is written to flash, and they
+are gone after a reboot. To copy one to your computer, run this on the
+computer — `scp` is built into Windows 10/11, macOS and Linux:
+
+```sh
+scp -O root@192.168.1.1:/tmp/report-public.txt .
+```
+
+Replace `192.168.1.1` with your router's address. `-O` makes recent
+OpenSSH clients use the classic SCP protocol, the one OpenWrt's Dropbear
+server speaks (it has no SFTP server by default). If your `scp` reports
+`-O` as an unknown option, it is an older client: run the command without
+it.
 
 ### What the report includes
 
@@ -321,16 +426,23 @@ verdict.
 3. nftables `sqm_dscp` table status and rule count (depends on enabled options)
 4. Priority UDP rule counters (per IPv4/IPv6 × upload/download)
 5. Priority TCP rule counters
-6. Bulk TCP/UDP rule counters
-7. Big HTTPS auto-downgrade counters
-8. Browsing classification counters
-9. Conntrack ctmark storage stats
-10. CAKE qdisc summary (upload + download)
-11. CAKE per-tin latency (Bulk / Best Effort / Video / Voice)
-12. Total bytes shaped and packets dropped
-13. Active conntrack entries for the priority device
-14. ctinfo / kernel module status
-15. Quick health check verdict (gaming detected, web traffic classified)
+6. Size tier counters (when enabled)
+7. Network-wide service counters (when enabled)
+8. Bulk TCP rule counters
+9. Bulk UDP rule counters
+10. Big HTTPS auto-downgrade counters
+11. Browsing classification counters
+12. Conntrack ctmark storage stats
+13. CAKE qdisc summary (upload + download)
+14. CAKE per-tin latency (Bulk / Best Effort / Video / Voice)
+15. Total bytes shaped and packets dropped
+16. Active conntrack entries for each priority device
+17. ctinfo status: kernel module, UCI option, filter on the WAN ingress
+18. Server Rules: ranges loaded, packets dropped, rules configured
+19. Lag Simulator status
+
+Then a quick health check verdict (priority traffic matched, web traffic
+deprioritized).
 
 ### When to use it
 
@@ -354,7 +466,7 @@ The installer automatically detects the package manager:
 
 ```sh
 cd /tmp && \
-uclient-fetch -O - https://github.com/Segalmen/openwrt-custom/archive/refs/tags/v1.8.2.tar.gz | tar xz && \
+uclient-fetch -O - https://github.com/Segalmen/openwrt-custom/archive/refs/tags/v2.0.0.tar.gz | tar xz && \
 cd openwrt-custom-* && \
 sh install.sh
 ```
@@ -378,6 +490,9 @@ sh install.sh --force     # Overwrite existing SQM config without confirmation
 - Auto-detect WAN interface
 - Pre-configure SQM via UCI (skipped if you keep your existing config —
   you'll need to select `Seg_Layer_Cake.qos` manually in LuCI).
+- Install Server Rules, the Lag Simulator and the Bootstrap Dark Blue theme
+  (registered, not activated) — existing `/etc/config/serverrules` and
+  `/etc/config/lagsim` are kept
 - Restart required services
 - Install the diagnostic tool to `/root/dscp-validate.sh`
 
@@ -391,8 +506,9 @@ upgrade. The following files are overwritten without prompting:
 
 - `Seg_Layer_Cake.qos` (SQM script)
 - `sqm.js` (custom LuCI SQM view)
-- `luci.dscp` (rpcd backend)
-- LuCI menu / ACL JSON files
+- `luci.dscp` (rpcd backend) and the LuCI tab pages
+- LuCI menu / ACL JSON files (the 1.x "Network → DSCP" entry is removed)
+- Server Rules and Lag Simulator scripts
 - `dscp-validate.sh` (diagnostic tool)
 
 **Your configuration in `/etc/config/sqm` is preserved by default** — the
@@ -403,6 +519,12 @@ installer prompts you before touching it:
 | **Y** (overwrite) | replaced with shipped defaults | applied automatically |
 | **N** (keep)      | preserved as-is | **skipped** — select `Seg_Layer_Cake.qos` manually in LuCI |
 | `--force` flag    | replaced unconditionally (no prompt) | applied automatically |
+
+The device, port and bulk options renamed in 2.0.0 are migrated
+automatically to their new names (`priority_ip`, `priority_ip6`,
+`priority_udp_ports`, `priority_tcp_ports`, `bulk_enable`, `bulk_dscp`), on
+every SQM queue. When you answer **Y**, the priority devices and ports of the
+replaced config are kept, like the bandwidth.
 
 Existing UCI configurations remain fully compatible across versions —
 the tier-aware dropdowns display your existing DSCP values correctly
@@ -447,11 +569,11 @@ DSCP policy logic becomes operational only when:
 - SQM is enabled in *Basic Settings*
 - **Seg_Layer_Cake.qos** is selected as the active SQM script
 
-### DSCP Connections
+### SQM QoS tabs
 
-After installation, go to **Network → DSCP → Connections** for the
-real-time connection view. No configuration required — read-only,
-with an optional **Flush Conntrack** button.
+After installation, **Network → SQM QoS** shows the Connections, Server
+Rules, Server History, Captures and Lag Simulator tabs next to SQM. No
+configuration required; the Lag Simulator stays off until you enable it.
 
 ### Validate the install
 
@@ -460,8 +582,8 @@ with an optional **Flush Conntrack** button.
 ```
 
 Look at the bottom of the report for the health check verdict:
-- ✓ Priority UDP IPv4 has matched ... packets — gaming traffic is classified
-- ✓ Bulk TCP has matched ... packets — web traffic is classified
+- ✓ Priority UDP IPv4 has matched ... packets
+- ✓ Bulk / Big HTTPS has matched ... packets (deprioritization active)
 
 ---
 
@@ -472,10 +594,13 @@ Look at the bottom of the report for the health check verdict:
 | `Seg_Layer_Cake.qos` | `/usr/lib/sqm/` |
 | `sqm.config` | `/etc/config/sqm` |
 | `sqm.js` (custom SQM LuCI view) | `/www/luci-static/resources/view/network/` |
-| `connections.js` (DSCP Connections view) | `/www/luci-static/resources/view/dscp/` |
+| Tab pages (`connections.js`, `serverrules.js`, `history.js`, `captures.js`, `lagsim.js`) | `/www/luci-static/resources/view/dscp/` |
 | `luci.dscp` (rpcd backend) | `/usr/libexec/rpcd/` |
-| LuCI menu entry | `/usr/share/luci/menu.d/` |
-| LuCI ACL rules | `/usr/share/rpcd/acl.d/` |
+| LuCI menu (`luci-app-sqm_dscp.json`) | `/usr/share/luci/menu.d/` |
+| LuCI ACL rules (`luci-app-dscp.json`) | `/usr/share/rpcd/acl.d/` |
+| Server Rules (`serverrules.sh`, init, config) | `/usr/libexec/serverrules/`, `/etc/init.d/serverrules`, `/etc/config/serverrules` |
+| Lag Simulator (`lagsim`, init, hotplug, config, netem tables) | `/usr/sbin/`, `/etc/init.d/`, `/etc/hotplug.d/net/`, `/etc/config/`, `/usr/lib/tc/` |
+| Bootstrap Dark Blue theme | `/www/luci-static/bootstrap-darkblue/`, `/usr/share/ucode/luci/template/themes/bootstrap-darkblue/` |
 | `dscp-validate.sh` (diagnostic tool) | `/root/` |
 
 ---
@@ -493,16 +618,22 @@ The uninstaller will:
 2. Restore the original `sqm.js` from backup
 3. Remove `Seg_Layer_Cake.qos`
 4. Restore the original `sqm.config` from backup
-5. Remove the DSCP Connections view and rpcd backend
-6. Remove the diagnostic tool from `/root/`
-7. Restart LuCI services
+5. Stop Server Rules and remove its table, script and config
+6. Stop the Lag Simulator and remove its files (kept when the standalone
+   `lagsim` package is installed)
+7. Remove the LuCI tabs, the rpcd backend, the server history, the captures
+   and the Bootstrap Dark Blue theme (LuCI goes back to Bootstrap if it was
+   active), plus the empty directories the installer created
+8. Remove the diagnostic tool from `/root/`
+9. Restart LuCI services
 
 ### Uninstaller options
 
 ```sh
 sh uninstall.sh --dry-run      # Show what would be done without changes
 sh uninstall.sh --force        # No interactive confirmation
-sh uninstall.sh --keep-config  # Keep /etc/config/sqm as-is
+sh uninstall.sh --keep-config  # Keep /etc/config/sqm, serverrules, lagsim
+                               # and the server history as-is
 ```
 
 ---
@@ -511,7 +642,7 @@ sh uninstall.sh --keep-config  # Keep /etc/config/sqm as-is
 
 - Default qdisc opts no longer hardcode `rtt 1ms`. CAKE auto-tunes RTT
   (≈100 ms), which is correct for most home setups. If you have a very
-  short LAN (e.g. gaming-only setup with sub-millisecond local paths),
+  short LAN (e.g. a setup with sub-millisecond local paths only),
   you can re-add `rtt 1ms` to `iqdisc_opts` / `eqdisc_opts` via LuCI's
   advanced qdisc options.
 - DSCP policy logic does not require manual DiffServ configuration in LuCI.
@@ -528,3 +659,24 @@ sh uninstall.sh --keep-config  # Keep /etc/config/sqm as-is
 - The diagnostic tool runs read-only operations only (nft list, tc -s,
   uci -q get) — it never modifies the system.
 - Designed for users familiar with OpenWrt and SQM.
+
+---
+
+## License and credits
+
+openwrt-custom is free software, released under the
+[GNU General Public License v3.0 or later](LICENSE).
+
+It builds on the work of others:
+
+- The Connections view (`connections/view/connections.js`) and its rpcd
+  backend (`connections/rpcd/luci.dscp`) are derived from
+  [luci-app-qosmate](https://github.com/hudra0/luci-app-qosmate) by hudra0,
+  GPL-3.0-or-later.
+- The Bootstrap Dark Blue theme (`theme/darkblue/`) is a variant of the
+  Bootstrap theme of [LuCI](https://github.com/openwrt/luci), Apache-2.0; the
+  original copyright notices are kept in its files.
+- `Seg_Layer_Cake.qos` runs inside
+  [sqm-scripts](https://github.com/tohojo/sqm-scripts) (GPL-2.0) and uses its
+  framework functions.
+- The Lag Simulator (`lagsim/`) is GPL-2.0-or-later.

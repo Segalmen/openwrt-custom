@@ -7,7 +7,7 @@
 #   - WAN interface from UCI sqm config
 #   - IFB ingress interface (ifb4<wan>)
 #   - CAKE per-tin stats (upload + download)
-#   - UCI config of priority/gaming policies
+#   - UCI config of the priority policies
 #
 # Usage:
 #   /root/dscp-validate.sh                     # full report (with real IPs/hostname)
@@ -15,7 +15,7 @@
 #   /root/dscp-validate.sh --anonymize | tee report.txt
 #
 # Output is plain text, safe to redirect to a file and share for support.
-# Designed for openwrt-custom v1.3+ (Seg_Layer_Cake.qos).
+# Designed for openwrt-custom v2.0+ (Seg_Layer_Cake.qos).
 # =============================================================================
 
 # Force C locale for predictable numeric/text parsing (awk/sed/printf)
@@ -98,10 +98,10 @@ echo "  IFB interface  : ${IFB_IF:-(not detected)}"
 print_section "2. UCI SQM configuration (active)"
 if uci -q show sqm >/dev/null 2>&1; then
     if [ "$ANONYMIZE" = "1" ]; then
-        # Replace gaming_ip values with placeholders
+        # Replace priority_ip values with placeholders
         uci -q show sqm | grep -E "@queue\[0\]" | sed \
-            -e "s|gaming_ip='[^']*'|gaming_ip='<USER-IPV4>'|g" \
-            -e "s|gaming_ip6='[^']*'|gaming_ip6='<USER-IPV6-PREFIX>'|g" \
+            -e "s|priority_ip='[^']*'|priority_ip='<USER-IPV4>'|g" \
+            -e "s|priority_ip6='[^']*'|priority_ip6='<USER-IPV6-PREFIX>'|g" \
             | sed 's/^/  /'
     else
         uci -q show sqm | grep -E "@queue\[0\]" | sed 's/^/  /'
@@ -162,31 +162,54 @@ print_section "5. Priority TCP rules (priority devices → Priority TCP DSCP)"
 print_rules "PrioTCP"
 
 # ----------------------------------------------------------------------------
-print_section "6. Bulk TCP rules (priority devices, Bulk TCP ports → Bulk DSCP)"
+print_section "6. Size tiers on priority traffic (medium / large packets)"
+if [ "$(uci -q get sqm.@queue[0].priority_size_tiers)" = "1" ]; then
+    print_rules "Tier"
+else
+    echo "  (off — priority_size_tiers = 0)"
+fi
+
+# ----------------------------------------------------------------------------
+print_section "7. Network-wide services (traffic still CS0 → service DSCP)"
+SVC_ON=""
+[ "$(uci -q get sqm.@queue[0].svc_icmp_dscp)" != "" ] && \
+    [ "$(uci -q get sqm.@queue[0].svc_icmp_dscp)" != "cs0" ] && SVC_ON="$SVC_ON ICMP"
+for _s in dns ssh conferencing live_video voip; do
+    [ "$(uci -q get sqm.@queue[0].svc_$_s)" = "1" ] && SVC_ON="$SVC_ON $_s"
+done
+if [ -n "$SVC_ON" ]; then
+    echo "  Enabled:$SVC_ON"
+    print_rules "Svc"
+else
+    echo "  (all off)"
+fi
+
+# ----------------------------------------------------------------------------
+print_section "8. Bulk TCP rules (priority devices, Bulk TCP ports → Bulk DSCP)"
 print_rules "BulkTCP"
 
 # ----------------------------------------------------------------------------
-print_section "7. Bulk UDP rules (priority devices, Bulk UDP ports → Bulk DSCP)"
+print_section "9. Bulk UDP rules (priority devices, Bulk UDP ports → Bulk DSCP)"
 print_rules "BulkUDP"
 
 # ----------------------------------------------------------------------------
-print_section "8. Big HTTPS auto-downgrade (>1000 bytes → Bulk DSCP)"
+print_section "10. Big HTTPS auto-downgrade (>1000 bytes → Bulk DSCP)"
 print_rules "BigHTTPS"
 
 # ----------------------------------------------------------------------------
-print_section "9. Browsing rules (traffic still CS0 → Browsing DSCP)"
+print_section "11. Browsing rules (traffic still CS0 → Browsing DSCP)"
 print_rules "Brows"
 
 # ----------------------------------------------------------------------------
-print_section "10. Conntrack mark storage (DSCP→ctmark)"
+print_section "12. Conntrack mark storage (DSCP→ctmark)"
 print_rules "Store"
 
 # ----------------------------------------------------------------------------
-print_section "11. CAKE qdisc summary"
+print_section "13. CAKE qdisc summary"
 echo ""
 # With cake_mq the root qdisc is followed by one CAKE instance per hardware
 # queue, most of them idle. Print the root, then the busiest instance — the
-# same one section 12 details — instead of whichever child comes first.
+# same one section 14 details — instead of whichever child comes first.
 print_qdisc_summary() {
     dev="$1"
     direction="$2"
@@ -228,7 +251,7 @@ echo ""
 print_qdisc_summary "$IFB_IF" "DOWNLOAD"
 
 # ----------------------------------------------------------------------------
-print_section "12. CAKE per-tin latency (Voice tin = CS4, CS5, CS6, CS7, EF, VA)"
+print_section "14. CAKE per-tin latency (Voice tin = CS4, CS5, CS6, CS7, EF, VA)"
 echo ""
 print_tin_summary() {
     dev="$1"
@@ -267,7 +290,7 @@ print_tin_summary "$WAN_IF" "UPLOAD"
 print_tin_summary "$IFB_IF" "DOWNLOAD"
 
 # ----------------------------------------------------------------------------
-print_section "13. Overall packet count summary"
+print_section "15. Overall packet count summary"
 SENT_UP="$(tc -s qdisc show dev "$WAN_IF" 2>/dev/null | awk '/Sent/ {print $2; exit}')"
 SENT_DOWN="$(tc -s qdisc show dev "$IFB_IF" 2>/dev/null | awk '/Sent/ {print $2; exit}')"
 DROP_UP="$(tc -s qdisc show dev "$WAN_IF" 2>/dev/null | sed -n 's/.*dropped \([0-9]*\).*/\1/p' | head -1)"
@@ -289,9 +312,9 @@ echo "  Upload   sent: $(hr_bytes "${SENT_UP:-0}")    dropped: ${DROP_UP:-0} pkt
 echo "  Download sent: $(hr_bytes "${SENT_DOWN:-0}")  dropped: ${DROP_DOWN:-0} pkts"
 
 # ----------------------------------------------------------------------------
-print_section "14. Conntrack statistics for priority device"
-PRIO_IP4="$(uci -q get sqm.@queue[0].gaming_ip)"
-PRIO_IP6="$(uci -q get sqm.@queue[0].gaming_ip6)"
+print_section "16. Conntrack statistics for priority devices"
+PRIO_IP4="$(uci -q get sqm.@queue[0].priority_ip)"
+PRIO_IP6="$(uci -q get sqm.@queue[0].priority_ip6)"
 
 # Display labels (anonymized or real)
 if [ "$ANONYMIZE" = "1" ]; then
@@ -307,24 +330,58 @@ echo "  Priority IPv6 : ${PRIO_IP6_DISP:-(not set)}"
 if ! command -v conntrack >/dev/null 2>&1; then
     echo "  (conntrack tool not installed — opkg install conntrack-tools to see connection counts)"
 else
-    if [ -n "$PRIO_IP4" ]; then
-        CT_IP4_S="$(conntrack -L -s "$PRIO_IP4" 2>/dev/null | grep -cE 'tcp|udp|icmp')"
-        CT_IP4_D="$(conntrack -L -d "$PRIO_IP4" 2>/dev/null | grep -cE 'tcp|udp|icmp')"
-        echo "  Active conntrack entries (IPv4 src=$PRIO_IP4_DISP): ${CT_IP4_S:-0}"
-        echo "  Active conntrack entries (IPv4 dst=$PRIO_IP4_DISP): ${CT_IP4_D:-0}"
-    fi
-    if [ -n "$PRIO_IP6" ]; then
-        PRIO_IP6_PREFIX="$(echo "$PRIO_IP6" | cut -d/ -f1 | sed 's/::$/:/')"
+    # priority_ip may hold several addresses (comma or space separated)
+    _n=0
+    for _ip in $(echo "$PRIO_IP4" | tr ',' ' '); do
+        _n=$((_n + 1))
+        if [ "$ANONYMIZE" = "1" ]; then _disp="<USER-IPV4-$_n>"; else _disp="$_ip"; fi
+        CT_IP4_S="$(conntrack -L -s "$_ip" 2>/dev/null | grep -cE 'tcp|udp|icmp')"
+        CT_IP4_D="$(conntrack -L -d "$_ip" 2>/dev/null | grep -cE 'tcp|udp|icmp')"
+        echo "  Active conntrack entries (IPv4 src=$_disp): ${CT_IP4_S:-0}"
+        echo "  Active conntrack entries (IPv4 dst=$_disp): ${CT_IP4_D:-0}"
+    done
+    _n=0
+    for _ip6 in $(echo "$PRIO_IP6" | tr ',' ' '); do
+        _n=$((_n + 1))
+        if [ "$ANONYMIZE" = "1" ]; then _disp="<USER-IPV6-PREFIX-$_n>"; else _disp="$_ip6"; fi
+        PRIO_IP6_PREFIX="$(echo "$_ip6" | cut -d/ -f1 | sed 's/::$/:/')"
         CT_IP6="$(conntrack -L -f ipv6 2>/dev/null | grep -E 'tcp|udp|icmp' | grep -c "$PRIO_IP6_PREFIX")"
-        echo "  Active conntrack entries (IPv6 prefix $PRIO_IP6_DISP): ${CT_IP6:-0}"
-    fi
+        echo "  Active conntrack entries (IPv6 $_disp): ${CT_IP6:-0}"
+    done
 fi
 
 # ----------------------------------------------------------------------------
-print_section "15. ctinfo / kernel module status"
-echo "  ct_dscpremark module : $(grep -cE '^(xt_dscp|cls_ctinfo)' /proc/modules 2>/dev/null) loaded matches"
+print_section "17. ctinfo / kernel module status"
+if grep -q '^act_ctinfo ' /proc/modules 2>/dev/null; then
+    echo "  act_ctinfo module    : loaded"
+else
+    echo "  act_ctinfo module    : not loaded (built in, or ctinfo unused)"
+fi
 CTINFO_ENABLE="$(uci -q get sqm.@queue[0].ctinfo_enable)"
 echo "  UCI ctinfo_enable    : ${CTINFO_ENABLE:-0} (1=ON, 0=OFF)"
+CTINFO_TC="$(tc filter show dev "$WAN_IF" ingress 2>/dev/null | grep -c ctinfo)"
+echo "  ctinfo action on WAN ingress : ${CTINFO_TC:-0} filter(s)"
+
+# ----------------------------------------------------------------------------
+print_section "18. Server Rules (nftables table 'serverrules')"
+if nft list table inet serverrules >/dev/null 2>&1; then
+    SR_RANGES="$(nft list set inet serverrules blocked 2>/dev/null | sed -n '/elements/,/}/p' | tr ',' '\n' | grep -c '/')"
+    echo "  Blocking active, ranges loaded: ${SR_RANGES:-0}"
+    nft list chain inet serverrules prerouting 2>/dev/null \
+        | sed -n 's/.*counter packets \([0-9]*\) bytes.*comment "\([^"]*\)".*/  \2: \1 pkts dropped/p'
+else
+    echo "  (not loaded — blocking off or Server Rules not installed)"
+fi
+SR_RULES="$(uci -q show serverrules 2>/dev/null | grep -c '=rule$')"
+echo "  Rules in /etc/config/serverrules: ${SR_RULES:-0}"
+
+# ----------------------------------------------------------------------------
+print_section "19. Lag Simulator"
+if [ -x /usr/sbin/lagsim ]; then
+    /usr/sbin/lagsim status 2>/dev/null | sed 's/^/  /'
+else
+    echo "  (not installed)"
+fi
 
 # ----------------------------------------------------------------------------
 echo ""

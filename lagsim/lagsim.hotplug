@@ -1,0 +1,6 @@
+#!/bin/sh
+# re-apply when the configured interface comes back (wifi reload, network restart)
+[ "$ACTION" = add ] || exit 0
+[ "$INTERFACE" = "$(uci -q get lagsim.globals.device)" ] || exit 0
+[ "$(uci -q get lagsim.globals.enabled)" = 1 ] || exit 0
+/etc/init.d/lagsim enabled && /usr/sbin/lagsim apply

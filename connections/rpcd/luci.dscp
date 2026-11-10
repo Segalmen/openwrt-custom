@@ -1,8 +1,15 @@
 #!/usr/bin/env lua
 -- =============================================================================
--- luci.dscp — rpcd backend for DSCP Connections LuCI view
--- Reads active connections from /proc/net/nf_conntrack
--- Zero impact on traffic: purely observational
+-- luci.dscp — rpcd backend for the SQM QoS DSCP views
+-- (connections, server history, labels, captures)
+-- Reads active connections from /proc/net/nf_conntrack (read-only).
+-- Writes only on explicit UI actions: conntrack flush, server history,
+-- serverrules labels, tcpdump captures in /tmp/dscp-captures.
+--
+-- SPDX-License-Identifier: GPL-3.0-or-later
+-- Derived from the luci.qosmate rpcd backend of luci-app-qosmate by hudra0
+-- (https://github.com/hudra0/luci-app-qosmate, GPL-3.0-or-later),
+-- modified and extended by Segalmen for openwrt-custom.
 -- =============================================================================
 
 local jsonc = require "luci.jsonc"
@@ -157,6 +164,16 @@ local function flush_ip(ip, family_flag)
     return total
 end
 
+local uci = require "luci.model.uci"
+
+local function run_cmd(cmd)
+    local handle = io.popen(cmd .. " 2>&1")
+    if not handle then return "" end
+    local output = handle:read("*a") or ""
+    handle:close()
+    return output
+end
+
 -- =============================================================================
 -- RPC method definitions
 -- =============================================================================
@@ -180,6 +197,8 @@ local methods = {
             local ip4 = args.ip4 or ""
             local ip6 = args.ip6 or ""
 
+            -- Accept a comma/space separated list (sqm priority_ip may hold
+            -- several devices). Each token is validated on its own.
             -- Basic safety: only accept IPv4/IPv6-looking patterns
             -- Reject anything with shell metacharacters to prevent injection
             -- Reject overly broad CIDR masks to prevent mass-flush of conntrack
@@ -206,19 +225,21 @@ local methods = {
                 return s
             end
 
-            ip4 = safe_ip(ip4)
-            ip6 = safe_ip(ip6)
-
-            local ipv4_count = 0
-            local ipv6_count = 0
-
-            if ip4 ~= "" then
-                ipv4_count = flush_ip(ip4, "-f ipv4")
+            local function flush_list(list, fam)
+                local count, done = 0, {}
+                for tok in tostring(list):gmatch("[^,%s]+") do
+                    local ip = safe_ip(tok)
+                    if ip ~= "" then
+                        count = count + flush_ip(ip, fam)
+                        done[#done + 1] = ip
+                    end
+                end
+                return count, table.concat(done, ",")
             end
 
-            if ip6 ~= "" then
-                ipv6_count = flush_ip(ip6, "-f ipv6")
-            end
+            local ipv4_count, ipv6_count
+            ipv4_count, ip4 = flush_list(ip4, "-f ipv4")
+            ipv6_count, ip6 = flush_list(ip6, "-f ipv6")
 
             local total = ipv4_count + ipv6_count
 
@@ -232,6 +253,441 @@ local methods = {
                     total      = total
                 })
             }
+        end
+    },
+    logServer = {
+        args = { ip = "", port = "", region = "", dscp = "" },
+        call = function(args)
+            args = args or {}
+            local ip = tostring(args.ip or "")
+            -- validate IPv4/IPv6-ish: digits, dots, colons, hex only
+            if not ip:match("^[%x%.:]+$") or #ip < 3 or #ip > 45 then
+                return { result = jsonc.stringify({ success = false, error = "invalid ip" }) }
+            end
+            -- sanitize the other fields (strip anything not safe)
+            local function clean(s, maxlen)
+                s = tostring(s or ""):gsub("[^%w%._%- ]", "")
+                if #s > maxlen then s = s:sub(1, maxlen) end
+                return s
+            end
+            local entry = {
+                ts     = os.time(),
+                ip     = ip,
+                port   = clean(args.port, 8),
+                region = clean(args.region, 40),
+                dscp   = clean(args.dscp, 8)
+            }
+
+            os.execute("mkdir -p /etc/sqm-dscp")
+            local path = "/etc/sqm-dscp/server-history.jsonl"
+            local fh = io.open(path, "a")
+            if not fh then
+                return { result = jsonc.stringify({ success = false, error = "cannot open log" }) }
+            end
+            fh:write(jsonc.stringify(entry) .. "\n")
+            fh:close()
+            return { result = jsonc.stringify({ success = true, entry = entry }) }
+        end
+    },
+
+    getServerHistory = {
+        args = {},
+        call = function()
+            local path = "/etc/sqm-dscp/server-history.jsonl"
+            local entries = {}
+            local fh = io.open(path, "r")
+            if fh then
+                for line in fh:lines() do
+                    if line and line ~= "" then
+                        local obj = jsonc.parse(line)
+                        if obj then entries[#entries + 1] = obj end
+                    end
+                end
+                fh:close()
+            end
+            return { result = jsonc.stringify({ success = true, entries = entries }) }
+        end
+    },
+
+    clearServerHistory = {
+        args = {},
+        call = function()
+            local path = "/etc/sqm-dscp/server-history.jsonl"
+            os.remove(path)
+            return { result = jsonc.stringify({ success = true }) }
+        end
+    },
+
+    -- -------------------------------------------------------------------------
+    -- labelServer: create (or extend) a serverrules rule
+    -- used purely as a LABEL. Always enabled='0' (no firewall effect), exactly
+    -- like the user's existing named rules. Single write path shared by the
+    -- 🏷️ Label buttons in Connections and Server History. suggestCidr only
+    -- feeds the caller with a CIDR; the write stays here.
+    -- -------------------------------------------------------------------------
+    labelServer = {
+        args = { name = "", cidr = "" },
+        call = function(args)
+            args = args or {}
+            local name = tostring(args.name or "")
+            local cidr = tostring(args.cidr or "")
+
+            -- name: letters/digits/underscore only (matches existing convention)
+            if not name:match("^[%w_]+$") then
+                return { result = jsonc.stringify({ success = false, error = "invalid name (letters, digits, _)" }) }
+            end
+            -- cidr: rough IPv4/CIDR shape; full public/private check is done UI-side
+            if not cidr:match("^%d+%.%d+%.%d+%.%d+/%d+$") then
+                return { result = jsonc.stringify({ success = false, error = "invalid cidr" }) }
+            end
+
+            local x = uci.cursor()
+            if not x then
+                return { result = jsonc.stringify({ success = false, error = "uci unavailable" }) }
+            end
+
+            -- find an existing rule with this name
+            local target_sid = nil
+            x:foreach("serverrules", "rule", function(s)
+                if (s.name or "") == name then target_sid = s[".name"] end
+            end)
+
+            local created = false
+            if target_sid then
+                -- extend: append cidr if not already present
+                local ranges = x:get("serverrules", target_sid, "range") or {}
+                if type(ranges) ~= "table" then ranges = { ranges } end
+                for _, r in ipairs(ranges) do
+                    if r == cidr then
+                        return { result = jsonc.stringify({ success = false, error = "cidr already in rule" }) }
+                    end
+                end
+                table.insert(ranges, cidr)
+                x:set("serverrules", target_sid, "range", ranges)
+            else
+                -- create a new label rule, disabled (label only)
+                target_sid = x:add("serverrules", "rule")
+                x:set("serverrules", target_sid, "name", name)
+                x:set("serverrules", target_sid, "enabled", "0")
+                x:set("serverrules", target_sid, "range", { cidr })
+                created = true
+            end
+
+            x:commit("serverrules")
+            return { result = jsonc.stringify({
+                success = true, created = created, name = name, cidr = cidr
+            }) }
+        end
+    },
+
+    -- -------------------------------------------------------------------------
+    -- suggestCidr: propose a CIDR for an IP, WITHOUT any
+    -- external API (read-only, no network dependency). Strategy:
+    --   1. if the IP falls inside the /16 of a range already known in a
+    --      serverrules rule, suggest extending THAT rule (reuses the user's
+    --      accumulated knowledge, e.g. Frankfurt 34.185.x → 34.179.x)
+    --   2. otherwise suggest <ip>/24 as the precise default, plus a wider
+    --      <ip>/16 variant the UI can offer as "broaden"
+    -- The result is only a suggestion; the user always edits/validates UI-side.
+    -- args: { ip = "34.159.57.168" }
+    -- -------------------------------------------------------------------------
+    suggestCidr = {
+        args = { ip = "" },
+        call = function(args)
+            args = args or {}
+            local ip = tostring(args.ip or "")
+            -- IPv4 only for suggestion (CIDR math); reject anything else
+            local o1, o2, o3, o4 = ip:match("^(%d+)%.(%d+)%.(%d+)%.(%d+)$")
+            if not o1 then
+                return { result = jsonc.stringify({ success = false, error = "ipv4 only" }) }
+            end
+            o1, o2, o3, o4 = tonumber(o1), tonumber(o2), tonumber(o3), tonumber(o4)
+            if o1 > 255 or o2 > 255 or o3 > 255 or o4 > 255 then
+                return { result = jsonc.stringify({ success = false, error = "invalid ipv4" }) }
+            end
+
+            local ipnum = o1 * 16777216 + o2 * 65536 + o3 * 256 + o4
+
+            -- helper: is ipnum inside cidr base a.b.c.d/p ?
+            -- No bitwise ops (router lua is not 5.3): two addresses share a /p
+            -- iff floor(addr / blocksize) is equal, with blocksize = 2^(32-p).
+            local function in_cidr(a, b, c, d, p)
+                if p < 0 or p > 32 then return false end
+                local base = a * 16777216 + b * 65536 + c * 256 + d
+                local blocksize = 2 ^ (32 - p)
+                return math.floor(ipnum / blocksize) == math.floor(base / blocksize)
+            end
+
+            -- 0. REAL BGP prefix via RIPEstat (the true, exact announced prefix).
+            -- uclient-fetch is in OpenWrt base; HTTPS needs libustream + ca-bundle
+            -- (install.sh pulls them). Short timeout, never blocking: on any
+            -- failure we fall back to the local heuristic below.
+            local bgp_prefix = nil
+            local bgp_asn = nil
+            local url = "https://stat.ripe.net/data/network-info/data.json?resource=" .. ip
+            local cmd = "uclient-fetch -qO- -T 4 '" .. url .. "' 2>/dev/null"
+            local resp = run_cmd(cmd)
+            if resp and #resp > 0 then
+                -- minimal extraction (no json dep needed): "prefix":"a.b.c.d/p"
+                local pfx = resp:match('"prefix"%s*:%s*"([%d%.]+/%d+)"')
+                if pfx and pfx:match("^%d+%.%d+%.%d+%.%d+/%d+$") then
+                    bgp_prefix = pfx
+                end
+                bgp_asn = resp:match('"asns"%s*:%s*%[%s*"(%d+)"')
+            end
+
+            -- 1. scan existing serverrules rules for a covering/neighbouring range
+            local x = uci.cursor()
+            local suggestion = nil
+            if x then
+                x:foreach("serverrules", "rule", function(s)
+                    if suggestion then return end
+                    local ranges = s.range or {}
+                    if type(ranges) ~= "table" then ranges = { ranges } end
+                    for _, r in ipairs(ranges) do
+                        local a, b, c, d, p = r:match("^(%d+)%.(%d+)%.(%d+)%.(%d+)/(%d+)$")
+                        if a then
+                            a, b, c, d, p = tonumber(a), tonumber(b), tonumber(c), tonumber(d), tonumber(p)
+                            -- already covered by this exact range?
+                            if in_cidr(a, b, c, d, p) then
+                                suggestion = { cidr = r, rule = (s.name or ""), reason = "covered" }
+                                return
+                            end
+                            -- same /16 neighbourhood → note the rule for "extend" hint
+                            if a == o1 and b == o2 then
+                                suggestion = { cidr = string.format("%d.%d.0.0/16", o1, o2),
+                                               rule = (s.name or ""), reason = "neighbour" }
+                                return
+                            end
+                        end
+                    end
+                end)
+            end
+
+            local default24 = string.format("%d.%d.%d.0/24", o1, o2, o3)
+            local wide16    = string.format("%d.%d.0.0/16", o1, o2)
+
+            -- Decision: the REAL BGP prefix wins (the true & exact range).
+            -- If an existing rule already covers the IP, keep the "extend that
+            -- rule" hint. Otherwise BGP prefix, else neighbour heuristic, else /24.
+            local final_cidr, final_reason, final_rule
+            if suggestion and suggestion.reason == "covered" then
+                final_cidr, final_reason, final_rule = suggestion.cidr, "covered", suggestion.rule
+            elseif bgp_prefix then
+                final_cidr, final_reason, final_rule = bgp_prefix, "bgp", (suggestion and suggestion.rule or "")
+            elseif suggestion then
+                final_cidr, final_reason, final_rule = suggestion.cidr, suggestion.reason, suggestion.rule
+            else
+                final_cidr, final_reason, final_rule = default24, "default", ""
+            end
+
+            return { result = jsonc.stringify({
+                success    = true,
+                ip         = ip,
+                suggested  = final_cidr,
+                rule       = final_rule,
+                reason     = final_reason,
+                bgp_prefix = bgp_prefix or "",
+                asn        = bgp_asn or "",
+                default24  = default24,
+                wide16     = wide16
+            }) }
+        end
+    },
+
+    -- -------------------------------------------------------------------------
+    -- packet capture (tcpdump) for diagnostics.
+    -- Captures stay in /tmp/dscp-captures (RAM, NOT under /www, so never
+    -- served unauthenticated). Download goes through cgi-io (authenticated).
+    -- Hard guards: single capture at a time (lock), duration cap, size cap,
+    -- strictly validated BPF (host + optional ports only — no shell metachars).
+    -- args: { iface, ip, ports (csv, optional), duration }
+    -- -------------------------------------------------------------------------
+    startCapture = {
+        args = { iface = "", ip = "", ports = "", duration = 120, label = "" },
+        call = function(args)
+            args = args or {}
+            local DIR = "/tmp/dscp-captures"
+            os.execute("mkdir -p " .. DIR)
+
+            -- validate iface FIRST (needed for the per-interface lock)
+            local iface = tostring(args.iface or "br-lan")
+            if not iface:match("^[%w%.%-]+$") then
+                return { result = jsonc.stringify({ success = false, error = "invalid iface" }) }
+            end
+
+            -- Per-interface lock: 1 live capture per iface (so eth3 + br-lan can
+            -- run in parallel to compare before/after NAT), but no duplicate on
+            -- the same iface. Global cap of 4 live captures protects RAM (/tmp).
+            local LOCK = DIR .. "/.lock-" .. iface
+            local live = 0
+            local lsout = run_cmd("ls -1 " .. DIR .. "/.lock-* 2>/dev/null")
+            for lp in lsout:gmatch("[^\r\n]+") do
+                local f = io.open(lp, "r")
+                if f then
+                    local pid = (f:read("*a") or ""):gsub("%s", ""); f:close()
+                    if pid ~= "" and os.execute("kill -0 " .. pid .. " 2>/dev/null") == 0 then
+                        live = live + 1
+                        if lp == LOCK then
+                            return { result = jsonc.stringify({ success = false,
+                                error = "a capture is already running on " .. iface }) }
+                        end
+                    else
+                        os.remove(lp)  -- stale lock, clean it
+                    end
+                end
+            end
+            if live >= 4 then
+                return { result = jsonc.stringify({ success = false,
+                    error = "too many captures running (max 4); wait or delete one" }) }
+            end
+
+            -- ip is OPTIONAL: the remote server is often picked dynamically, so
+            -- the "ports" capture filters by PORT, not by host. host filter is
+            -- only used when an ip is explicitly given (e.g. a known server).
+            local ip = tostring(args.ip or "")
+            if ip ~= "" and (not ip:match("^[%x%.:]+$") or #ip < 3) then
+                return { result = jsonc.stringify({ success = false, error = "invalid ip" }) }
+            end
+            -- validate ports: only digits, commas and dashes (csv/ranges)
+            local ports = tostring(args.ports or "")
+            if ports ~= "" and not ports:match("^[%d,%-]+$") then
+                return { result = jsonc.stringify({ success = false, error = "invalid ports" }) }
+            end
+            -- must have at least one selector (port or ip), else refuse
+            if ip == "" and ports == "" then
+                return { result = jsonc.stringify({ success = false, error = "need a port or an ip to capture" }) }
+            end
+            -- duration: clamp 1..300
+            local dur = tonumber(args.duration) or 120
+            if dur < 1 then dur = 1 end
+            if dur > 300 then dur = 300 end
+
+            -- build a SAFE BPF. Port-based by default (robust to matchmaking:
+            -- the server IP is unknown in advance). Optional host narrows it.
+            local parts = {}
+            if ip ~= "" then parts[#parts + 1] = "host " .. ip end
+            if ports ~= "" then
+                local pexpr = {}
+                for p in ports:gmatch("[^,]+") do
+                    if p:match("^%d+%-%d+$") then
+                        pexpr[#pexpr + 1] = "portrange " .. p
+                    elseif p:match("^%d+$") then
+                        pexpr[#pexpr + 1] = "port " .. p
+                    end
+                end
+                if #pexpr > 0 then
+                    parts[#parts + 1] = "(" .. table.concat(pexpr, " or ") .. ")"
+                end
+            end
+            local bpf = table.concat(parts, " and ")
+
+            -- optional label: an indicative server IP shown at click time in
+            -- ports mode. It only feeds the FILENAME, never the BPF (the actual
+            -- server may differ). Validated like an IP.
+            local label = tostring(args.label or "")
+            if label ~= "" and not label:match("^[%x%.:]+$") then label = "" end
+
+            local ts    = os.time()
+            local itag  = iface:gsub("[^%w]", "_")
+            local ftag
+            if ip ~= "" then
+                ftag = ip:gsub("[^%w]", "_")
+            elseif label ~= "" then
+                ftag = label:gsub("[^%w]", "_") .. "-p" .. (ports:gsub("[^%w]", "_"))
+            else
+                ftag = "p" .. (ports:gsub("[^%w]", "_"))
+            end
+            local fname = string.format("capture-%s-%s-%d.pcap", itag, ftag, ts)
+            local fpath = DIR .. "/" .. fname
+
+            -- Duration bound WITHOUT `timeout` (absent) and WITHOUT relying on
+            -- tcpdump -G (which only rotates when a packet arrives, so a quiet
+            -- filtered flow would run forever). We launch tcpdump in the
+            -- background, record its PID, and a detached watchdog kills it
+            -- after <dur> seconds. -c is a hard packet-count safety net.
+            -- The BPF is single-quoted: its parentheses must reach tcpdump,
+            -- not be parsed by the shell (which would be a syntax error).
+            local cmd = string.format(
+                "tcpdump -i %s -c 200000 -w %s '%s' >/dev/null 2>&1 & "
+                .. "TPID=$!; echo $TPID > %s; "
+                .. "( sleep %d; kill $TPID 2>/dev/null; rm -f %s ) >/dev/null 2>&1 &",
+                iface, fpath, bpf, LOCK, dur, LOCK)
+            os.execute(cmd)
+
+            return { result = jsonc.stringify({
+                success = true, file = fname, duration = dur, bpf = bpf
+            }) }
+        end
+    },
+
+    listCaptures = {
+        args = {},
+        call = function()
+            local DIR = "/tmp/dscp-captures"
+            -- use find (clean output, no error line when empty)
+            local out = run_cmd("find " .. DIR .. " -maxdepth 1 -name '*.pcap*' -type f 2>/dev/null")
+            local files = {}
+            for path in out:gmatch("[^\r\n]+") do
+                local name = path:match("([^/]+)$")
+                if name and name:match("%.pcap") then
+                    local sz = run_cmd("wc -c < '" .. path .. "' 2>/dev/null"):gsub("%s", "")
+                    files[#files + 1] = {
+                        name = name, path = path, size = tonumber(sz) or 0
+                    }
+                end
+            end
+            -- count live per-interface captures (.lock-<iface>)
+            local running = 0
+            local lsout = run_cmd("ls -1 " .. DIR .. "/.lock-* 2>/dev/null")
+            for lp in lsout:gmatch("[^\r\n]+") do
+                local lf = io.open(lp, "r")
+                if lf then
+                    local pid = (lf:read("*a") or ""):gsub("%s", ""); lf:close()
+                    if pid ~= "" and os.execute("kill -0 " .. pid .. " 2>/dev/null") == 0 then
+                        running = running + 1
+                    end
+                end
+            end
+            return { result = jsonc.stringify({ success = true, files = files, running = running }) }
+        end
+    },
+
+    deleteCapture = {
+        args = { name = "" },
+        call = function(args)
+            args = args or {}
+            local name = tostring(args.name or "")
+            -- only allow plain capture file names, no path traversal
+            if not name:match("^capture%-[%w_%.%-]+%.pcap%d*$") then
+                return { result = jsonc.stringify({ success = false, error = "invalid name" }) }
+            end
+            os.remove("/tmp/dscp-captures/" .. name)
+            return { result = jsonc.stringify({ success = true }) }
+        end
+    },
+
+    -- list real network interfaces for the capture selector.
+    -- Read-only. Tags br-lan / WAN so the UI can hint which to pick:
+    -- br-lan = flow/IP view (DSCP not yet marked on egress);
+    -- WAN    = on-the-wire DSCP after nftables marking.
+    listInterfaces = {
+        args = {},
+        call = function()
+            -- resolve the WAN L3 device from the network config (best effort)
+            local wan = run_cmd(". /lib/functions/network.sh 2>/dev/null; "
+                .. "network_get_device dev wan 2>/dev/null; echo $dev"):gsub("%s", "")
+            local out = run_cmd("ls -1 /sys/class/net 2>/dev/null")
+            local ifaces = {}
+            for name in out:gmatch("[^\r\n]+") do
+                if name ~= "lo" and not name:match("^ifb") then
+                    local role = ""
+                    if name == "br-lan" then role = "lan"
+                    elseif wan ~= "" and name == wan then role = "wan" end
+                    ifaces[#ifaces + 1] = { name = name, role = role }
+                end
+            end
+            return { result = jsonc.stringify({ success = true, interfaces = ifaces, wan = wan }) }
         end
     }
 }

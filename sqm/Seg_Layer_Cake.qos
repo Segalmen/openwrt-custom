@@ -123,31 +123,49 @@ _load_uci_options() {
     ENABLE_MQ="$(uci_get "$SQM_SECTION" enable_mq 0)"
     CTINFO_ENABLE="$(uci_get "$SQM_SECTION" ctinfo_enable 1)"
 
-    PRIORITY_IP_RAW="$(uci_get "$SQM_SECTION" gaming_ip '192.168.1.100')"
-    PRIORITY_IP6_RAW="$(uci_get "$SQM_SECTION" gaming_ip6 'fd00::1')"
+    PRIORITY_IP_RAW="$(uci_get "$SQM_SECTION" priority_ip '')"
+    PRIORITY_IP6_RAW="$(uci_get "$SQM_SECTION" priority_ip6 '')"
 
     PRIORITY_UDP_ENABLE="$(uci_get "$SQM_SECTION" priority_udp_enable 0)"
     PRIORITY_UDP_DSCP="$(uci_get "$SQM_SECTION" priority_udp_dscp ef)"
-    PRIORITY_UDP_PORTS="$(uci_get "$SQM_SECTION" gaming_udp_ports '3659,3074,3478-3480,10000-45000')"
+    PRIORITY_UDP_PORTS="$(uci_get "$SQM_SECTION" priority_udp_ports '')"
 
     PRIORITY_TCP_ENABLE="$(uci_get "$SQM_SECTION" priority_tcp_enable 0)"
     PRIORITY_TCP_DSCP="$(uci_get "$SQM_SECTION" priority_tcp_dscp cs0)"
-    PRIORITY_TCP_PORTS="$(uci_get "$SQM_SECTION" gaming_tcp_ports '')"
+    PRIORITY_TCP_PORTS="$(uci_get "$SQM_SECTION" priority_tcp_ports '')"
 
     BROWSING_ENABLE="$(uci_get "$SQM_SECTION" browsing_enable 0)"
     BROWSING_DSCP="$(uci_get "$SQM_SECTION" browsing_dscp af21)"
     BROWSING_TCP_PORTS="$(uci_get "$SQM_SECTION" browsing_tcp_ports '80,8080,443')"
     BROWSING_UDP_PORTS="$(uci_get "$SQM_SECTION" browsing_udp_ports '443')"
 
-    BULK_ENABLE="$(uci_get "$SQM_SECTION" gaming_bulk_enable 0)"
+    BULK_ENABLE="$(uci_get "$SQM_SECTION" bulk_enable 0)"
     # Bulk has its own port lists. Unset falls back to the browsing lists,
     # which is what installs made before v1.8.0 relied on.
     BULK_TCP_PORTS="$(uci_get "$SQM_SECTION" bulk_tcp_ports "$BROWSING_TCP_PORTS")"
     BULK_UDP_PORTS="$(uci_get "$SQM_SECTION" bulk_udp_ports "$BROWSING_UDP_PORTS")"
-    BULK_DSCP="$(uci_get "$SQM_SECTION" gaming_bulk_dscp cs1)"
+    BULK_DSCP="$(uci_get "$SQM_SECTION" bulk_dscp cs1)"
 
     # Big HTTPS auto-downgrade
     BIG_HTTPS_DOWNGRADE="$(uci_get "$SQM_SECTION" big_https_downgrade 1)"
+
+    # Size tiers on priority traffic (2.0.0, off by default): small packets
+    # keep the priority class, medium ones get PRIORITY_MEDIUM_DSCP, large
+    # ones are demoted to the bulk class.
+    PRIORITY_SIZE_TIERS="$(uci_get "$SQM_SECTION" priority_size_tiers 0)"
+    PRIORITY_SIZE_SMALL="$(uci_get "$SQM_SECTION" priority_size_small 160)"
+    PRIORITY_SIZE_MEDIUM="$(uci_get "$SQM_SECTION" priority_size_medium 1300)"
+    PRIORITY_MEDIUM_DSCP="$(uci_get "$SQM_SECTION" priority_medium_dscp cs4)"
+
+    # Network-wide services (2.0.0, all off by default). Each one only marks
+    # traffic still at CS0, so a mark set by an application or by the
+    # priority rules is never overwritten.
+    SVC_ICMP_DSCP="$(uci_get "$SQM_SECTION" svc_icmp_dscp cs0)"
+    SVC_DNS="$(uci_get "$SQM_SECTION" svc_dns 0)"
+    SVC_SSH="$(uci_get "$SQM_SECTION" svc_ssh 0)"
+    SVC_CONFERENCING="$(uci_get "$SQM_SECTION" svc_conferencing 0)"
+    SVC_LIVE_VIDEO="$(uci_get "$SQM_SECTION" svc_live_video 0)"
+    SVC_VOIP="$(uci_get "$SQM_SECTION" svc_voip 0)"
 
     # Normalize DSCP to lowercase (nftables requirement)
     PRIORITY_UDP_DSCP="$(printf '%s' "$PRIORITY_UDP_DSCP" | tr '[:upper:]' '[:lower:]')"
@@ -162,11 +180,36 @@ _load_uci_options() {
     PRIORITY_UDP_DSCP="$(validate_dscp "$PRIORITY_UDP_DSCP" ef   priority_udp_dscp)"
     PRIORITY_TCP_DSCP="$(validate_dscp "$PRIORITY_TCP_DSCP" cs0  priority_tcp_dscp)"
     BROWSING_DSCP="$(validate_dscp     "$BROWSING_DSCP"     af21 browsing_dscp)"
-    BULK_DSCP="$(validate_dscp         "$BULK_DSCP"         cs1  gaming_bulk_dscp)"
+    BULK_DSCP="$(validate_dscp         "$BULK_DSCP"         cs1  bulk_dscp)"
+    PRIORITY_MEDIUM_DSCP="$(printf '%s' "$PRIORITY_MEDIUM_DSCP" | tr '[:upper:]' '[:lower:]')"
+    PRIORITY_MEDIUM_DSCP="$(validate_dscp "$PRIORITY_MEDIUM_DSCP" cs4 priority_medium_dscp)"
+    SVC_ICMP_DSCP="$(printf '%s' "$SVC_ICMP_DSCP" | tr '[:upper:]' '[:lower:]')"
+    SVC_ICMP_DSCP="$(validate_dscp "$SVC_ICMP_DSCP" cs0 svc_icmp_dscp)"
+
+    # Size thresholds: whole numbers, small < medium < 1500, else defaults
+    case "$PRIORITY_SIZE_SMALL$PRIORITY_SIZE_MEDIUM" in
+        *[!0-9]*|"") _sz_ok=0 ;;
+        *) _sz_ok=1 ;;
+    esac
+    if [ "$_sz_ok" = "0" ] || [ "$PRIORITY_SIZE_SMALL" -lt 1 ] || \
+       [ "$PRIORITY_SIZE_SMALL" -ge "$PRIORITY_SIZE_MEDIUM" ] || [ "$PRIORITY_SIZE_MEDIUM" -ge 1500 ]; then
+        logger -t SQM "Seg_Layer_Cake.qos: invalid priority_size_small/medium '$PRIORITY_SIZE_SMALL/$PRIORITY_SIZE_MEDIUM' — falling back to 160/1300"
+        PRIORITY_SIZE_SMALL=160; PRIORITY_SIZE_MEDIUM=1300
+    fi
 
     # Build nftables IP sets
-    PRIORITY_IP_SET="$(make_nft_set "$PRIORITY_IP_RAW")"
-    PRIORITY_IP6_SET="$(make_nft_set "$PRIORITY_IP6_RAW")"
+    # No address for a family: use an address no forwarded packet carries,
+    # so the rules of that family stay valid and simply never match.
+    if [ -n "$PRIORITY_IP_RAW" ]; then
+        PRIORITY_IP_SET="$(make_nft_set "$PRIORITY_IP_RAW")"
+    else
+        PRIORITY_IP_SET="{ 0.0.0.0/32 }"
+    fi
+    if [ -n "$PRIORITY_IP6_RAW" ]; then
+        PRIORITY_IP6_SET="$(make_nft_set "$PRIORITY_IP6_RAW")"
+    else
+        PRIORITY_IP6_SET="{ ::/128 }"
+    fi
 
     # MQ support — required by select_cake / start-sqm
     [ "$ENABLE_MQ" = "1" ] && SUPPORT_MQ=1 || SUPPORT_MQ=0
@@ -179,6 +222,8 @@ _load_uci_options() {
     export BROWSING_ENABLE BROWSING_DSCP BROWSING_TCP_PORTS BROWSING_UDP_PORTS
     export BULK_ENABLE BULK_DSCP BULK_TCP_PORTS BULK_UDP_PORTS
     export BIG_HTTPS_DOWNGRADE
+    export PRIORITY_SIZE_TIERS PRIORITY_SIZE_SMALL PRIORITY_SIZE_MEDIUM PRIORITY_MEDIUM_DSCP
+    export SVC_ICMP_DSCP SVC_DNS SVC_SSH SVC_CONFERENCING SVC_LIVE_VIDEO SVC_VOIP
 }
 
 # =============================================================================
@@ -207,7 +252,7 @@ ingress() {
     SILENT=1 $TC qdisc del dev "$IFACE" handle ffff: ingress 2>/dev/null || true
     $TC qdisc add dev "$IFACE" handle ffff: ingress
 
-    $TC qdisc del dev "$DEV" root 2>/dev/null || true
+    SILENT=1 $TC qdisc del dev "$DEV" root 2>/dev/null || true
 
     # With ctinfo ON keep DSCP meaningful — disable besteffort/wash
     if [ "$CTINFO_ENABLE" = "1" ]; then
@@ -267,6 +312,34 @@ ingress() {
 #   3. Bulk (TCP/UDP + BigHTTPS) → background web/download traffic → CS1
 #   4. Browsing → only marks pure CS0 traffic (other devices on LAN)
 # =============================================================================
+# _prio_tier <ip|ip6> <set> <udp|tcp> <ports> <length range> <dscp> <comment>
+# One size tier for the priority devices, both directions, both ports
+# (same four matches as rules 1 and 2). Uses $_chain of the caller.
+_prio_tier() {
+    [ -n "$2" ] || return 0
+    nft add rule inet sqm_dscp "$_chain" $1 saddr "$2" $3 sport { "$4" } \
+        meta length "$5" counter $1 dscp set "$6" comment "${7}up"
+    nft add rule inet sqm_dscp "$_chain" $1 saddr "$2" $3 dport { "$4" } \
+        meta length "$5" counter $1 dscp set "$6" comment "${7}upsrv"
+    nft add rule inet sqm_dscp "$_chain" $1 daddr "$2" $3 dport { "$4" } \
+        meta length "$5" counter $1 dscp set "$6" comment "${7}dwn"
+    nft add rule inet sqm_dscp "$_chain" $1 daddr "$2" $3 sport { "$4" } \
+        meta length "$5" counter $1 dscp set "$6" comment "${7}dwnsrv"
+}
+
+# _svc_rule <udp|tcp> <port or { set }> <dscp> <comment>
+# A service on every device, both directions, IPv4 and IPv6, CS0 only.
+_svc_rule() {
+    nft add rule inet sqm_dscp "$_chain" ip dscp cs0 $1 dport $2 \
+        counter ip dscp set "$3" comment "${4}4"
+    nft add rule inet sqm_dscp "$_chain" ip dscp cs0 $1 sport $2 \
+        counter ip dscp set "$3" comment "${4}4r"
+    nft add rule inet sqm_dscp "$_chain" ip6 dscp cs0 $1 dport $2 \
+        counter ip6 dscp set "$3" comment "${4}6"
+    nft add rule inet sqm_dscp "$_chain" ip6 dscp cs0 $1 sport $2 \
+        counter ip6 dscp set "$3" comment "${4}6r"
+}
+
 _build_dscp_rules() {
     local _chain="$1"
 
@@ -383,6 +456,56 @@ _build_dscp_rules() {
             counter ip6 dscp set "$PRIORITY_TCP_DSCP" \
             comment "PrioTCPdwn6srv"
     fi
+
+    # ------------------------------------------------------------------
+    # 2b. Size tiers on priority traffic (optional)
+    #
+    # Runs after rules 1 and 2, so it only refines what they marked:
+    #   UDP: (small, medium] -> PRIORITY_MEDIUM_DSCP, > medium -> BULK_DSCP
+    #   TCP: > small -> BULK_DSCP
+    # Large packets on a priority port are transfers (updates, downloads
+    # inside the application), not real-time traffic.
+    # ------------------------------------------------------------------
+    if [ "$PRIORITY_SIZE_TIERS" = "1" ]; then
+        _mlo=$((PRIORITY_SIZE_SMALL + 1))
+        _llo=$((PRIORITY_SIZE_MEDIUM + 1))
+        _tlo=$((PRIORITY_SIZE_SMALL + 1))
+        if [ "$PRIORITY_UDP_ENABLE" = "1" ] && [ -n "$PRIORITY_UDP_PORTS" ]; then
+            _prio_tier ip  "$PRIORITY_IP_SET"  udp "$PRIORITY_UDP_PORTS" "$_mlo-$PRIORITY_SIZE_MEDIUM" "$PRIORITY_MEDIUM_DSCP" TierUDPmed4
+            _prio_tier ip  "$PRIORITY_IP_SET"  udp "$PRIORITY_UDP_PORTS" "$_llo-65535" "$BULK_DSCP" TierUDPlarge4
+            _prio_tier ip6 "$PRIORITY_IP6_SET" udp "$PRIORITY_UDP_PORTS" "$_mlo-$PRIORITY_SIZE_MEDIUM" "$PRIORITY_MEDIUM_DSCP" TierUDPmed6
+            _prio_tier ip6 "$PRIORITY_IP6_SET" udp "$PRIORITY_UDP_PORTS" "$_llo-65535" "$BULK_DSCP" TierUDPlarge6
+        fi
+        if [ "$PRIORITY_TCP_ENABLE" = "1" ] && [ -n "$PRIORITY_TCP_PORTS" ]; then
+            _prio_tier ip  "$PRIORITY_IP_SET"  tcp "$PRIORITY_TCP_PORTS" "$_tlo-65535" "$BULK_DSCP" TierTCPlarge4
+            _prio_tier ip6 "$PRIORITY_IP6_SET" tcp "$PRIORITY_TCP_PORTS" "$_tlo-65535" "$BULK_DSCP" TierTCPlarge6
+        fi
+    fi
+
+    # ------------------------------------------------------------------
+    # 2c. Network-wide services (optional, every device)
+    # Only marks traffic still at CS0 (same guard as Browsing).
+    # ------------------------------------------------------------------
+    if [ "$SVC_ICMP_DSCP" != "cs0" ]; then
+        nft add rule inet sqm_dscp "$_chain" ip dscp cs0 meta l4proto icmp \
+            counter ip dscp set "$SVC_ICMP_DSCP" comment "SvcICMP4"
+        nft add rule inet sqm_dscp "$_chain" ip6 dscp cs0 meta l4proto ipv6-icmp \
+            counter ip6 dscp set "$SVC_ICMP_DSCP" comment "SvcICMP6"
+    fi
+    [ "$SVC_DNS" = "1" ] && {
+        _svc_rule udp "{ 53, 853, 5353, 123 }" cs3 SvcDNS
+        _svc_rule tcp "{ 53, 853 }" cs3 SvcDNStcp
+    }
+    [ "$SVC_SSH" = "1" ] && _svc_rule tcp "22" af41 SvcSSH
+    [ "$SVC_CONFERENCING" = "1" ] && {
+        _svc_rule udp "{ 3478-3481, 8801-8810, 9000, 50000-50059 }" af41 SvcConf
+        _svc_rule tcp "{ 5004, 5349, 8801-8802 }" af41 SvcConftcp
+    }
+    [ "$SVC_LIVE_VIDEO" = "1" ] && _svc_rule tcp "{ 1935-1936, 2396, 2935 }" af41 SvcLive
+    [ "$SVC_VOIP" = "1" ] && {
+        _svc_rule udp "{ 5060-5061, 500, 4500 }" ef SvcVoIP
+        _svc_rule tcp "{ 5060-5061 }" ef SvcVoIPtcp
+    }
 
     # ------------------------------------------------------------------
     # 3. Bulk traffic classification

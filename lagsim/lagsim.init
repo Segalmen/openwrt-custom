@@ -1,0 +1,22 @@
+#!/bin/sh /etc/rc.common
+# SPDX-License-Identifier: GPL-2.0-or-later
+
+START=99
+STOP=10
+USE_PROCD=1
+
+start_service() {
+	/usr/sbin/lagsim apply
+}
+
+stop_service() {
+	/usr/sbin/lagsim teardown
+}
+
+reload_service() {
+	/usr/sbin/lagsim apply
+}
+
+service_triggers() {
+	procd_add_reload_trigger "lagsim"
+}

@@ -1,18 +1,23 @@
 {
     "luci-app-dscp": {
-        "description": "Grant access to DSCP Connections view",
+        "description": "Grant access to the SQM QoS DSCP views (Connections, Server Rules, Server History, Captures, Lag Simulator)",
         "read": {
             "file": {
-                "/usr/lib/sqm/Seg_Layer_Cake.version": [ "read" ]
+                "/usr/lib/sqm/Seg_Layer_Cake.version": [ "read" ],
+                "/tmp/dscp-captures/*": [ "read" ],
+                "/usr/sbin/lagsim status": [ "exec" ]
             },
             "ubus": {
-                "luci.dscp": [ "getConntrackDSCP" ]
-            }
+                "luci.dscp": [ "getConntrackDSCP", "getServerHistory", "listCaptures", "listInterfaces", "suggestCidr" ],
+                "luci-rpc": [ "getHostHints" ]
+            },
+            "uci": [ "sqm", "serverrules", "lagsim" ]
         },
         "write": {
             "ubus": {
-                "luci.dscp": [ "flushConntrack" ]
-            }
+                "luci.dscp": [ "flushConntrack", "logServer", "clearServerHistory", "labelServer", "startCapture", "deleteCapture" ]
+            },
+            "uci": [ "serverrules", "lagsim" ]
         }
     }
 }
