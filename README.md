@@ -563,6 +563,11 @@ After installation, configure SQM in LuCI:
      for guidance on choosing values
 4. Click **Save & Apply**
 
+After installing or updating, force-reload LuCI with Ctrl+F5. If some pages
+still look old, the browser is keeping cached files: open the developer tools
+(F12), tick "Disable cache" in the Network tab and reload the page, or log out
+of LuCI and log back in.
+
 ⚠️ The installer does not set bandwidth or overhead values automatically.
 
 DSCP policy logic becomes operational only when:
