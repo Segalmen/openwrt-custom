@@ -1,5 +1,43 @@
 # Changelog
 
+## [2.0.1] — 2026-11-12
+
+### Fixed
+- **A `/0` range in Server Rules could block all IPv4 traffic.** `8.0.0.0/0`
+  passed the private-range check and was loaded as `0.0.0.0/0`, dropping
+  traffic in both directions, LAN included. Prefixes shorter than `/8` are now
+  refused everywhere: by the script, the Ban and Label dialogs, the Server
+  Rules page and the `labelServer` backend.
+- **Reloading Server Rules was not atomic.** The table was deleted, created
+  again empty, then filled one range at a time: blocking was off during each
+  reload, and a failed load left no table. It is now rebuilt in a single `nft`
+  transaction; on any error the previous table stays in place.
+- **Ranges are checked strictly before they reach `nft`.** Only IPv4 CIDR
+  (`a.b.c.d/p`) or a single address is accepted. Private/reserved, too wide
+  or malformed entries are skipped and logged (`logread -e serverrules`). The
+  `labelServer` backend applies the same checks instead of relying on the
+  page.
+- **The global switch and rule state are read as OpenWrt booleans.** Only `1`
+  counted as enabled, so `on`/`true`/`yes` turned blocking off, and with
+  several `global` sections the last one won. Now `0`/`off`/`false`/`no`/
+  `disabled` mean off and anything else on; any `global` section set to off
+  disables blocking. The rule badge and the Unban / Enable button in
+  Connections read rule state the same way.
+- **The Ban dialog preselected the first existing rule** when no rule covered
+  the IP; if that rule was active, the range was blocked at once. It now
+  opens on New location, which creates a disabled rule.
+- **Label onto an active rule blocked the range without saying so.** The
+  dialog now warns, and its button reads "Label and block".
+- **Server Rules page:** "+" and Enter no longer add a refused range, and the
+  rule name is mandatory.
+- **Server History and the Label lists** no longer show the generated id
+  (`cfgXXXXXX`) of an anonymous rule that has no name.
+
+### Changed
+- **`a-b` ranges are no longer accepted** in `/etc/config/serverrules`: they
+  are skipped and logged. Use CIDR instead.
+- README: Server Rules reload, global switch and range checks documented.
+
 ## [2.0.0] — 2026-11-10
 
 ### Changed
