@@ -339,8 +339,10 @@ A **real-time DSCP Connections view**.
   - **⛔ Ban / ▶ Enable** — add the server's range to Server Rules, or
     enable the rule that covers it. A new rule is always created disabled.
   - **📌 Log** (priority flows) — record the server in Server History
-  - **🏷️ Label** (priority flows) — name the server's range as a disabled
-    rule (label only, no blocking)
+  - **🏷️ Label** (priority flows) — name the server's range. A new label
+    is created as a disabled rule (label only, no blocking); adding the
+    range to an existing active rule blocks it, and the dialog then warns
+    and shows **Label and block**
   - **📷 Ports / 📷 Full / 📷 Capture** — start a tcpdump capture: the
     priority ports, all traffic with this server, or with this IP
 - The suggested range is the real BGP prefix announced for the IP
