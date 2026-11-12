@@ -59,6 +59,22 @@ function cidrTooWide(cidr) {
     return !!m && +m[5] < 8;
 }
 
+// Is the Server Rules rule that labelServer would extend for `name` ACTIVE?
+// Same lookup as the backend (rule whose name option equals `name`, last
+// match wins) and same reading of `enabled` as serverrules.sh
+// (config_get_bool, default on): only an off value disables a rule; a
+// missing or unknown value means active.
+// KEEP IN SYNC between connections.js and history.js.
+function labelTargetIsActive(name) {
+    var off = [ '0', 'off', 'false', 'no', 'disabled' ];
+    var active = false;
+    uci.sections('serverrules', 'rule', function(s) {
+        if ((s.name || '') === name)
+            active = (off.indexOf(String(s.enabled)) < 0);
+    });
+    return active;
+}
+
 function fmtTime(ts) {
     if (!ts) return '–';
     var d = new Date(ts * 1000);
@@ -258,8 +274,30 @@ return view.extend({
             type: 'text', class: 'cbi-input-text', style: 'width:100%; margin-top:4px;', placeholder: 'Server_EU'
         });
         underscoreSpaces(newNameInput);
+        // Red warning under the select + explicit button label when the
+        // chosen rule is active: the label would then be a real ban.
+        var activeWarn = E('div', {
+            style: 'display:none; color:#e0524f; font-weight:bold; margin-top:6px;'
+        }, '');
+        // Intro sentence: follows the selected rule state, like activeWarn.
+        var introText = E('p', {}, '');
+        var saveBtn = null;
         function syncNameField() {
-            newNameInput.style.display = (nameSelect.value === NEW) ? '' : 'none';
+            var isNew = (nameSelect.value === NEW);
+            var active = !isNew && labelTargetIsActive(nameSelect.value);
+            newNameInput.style.display = isNew ? '' : 'none';
+            activeWarn.textContent = active
+                ? _('Rule "%s" is ACTIVE: this range will be BLOCKED. Choose New label to only name it.')
+                    .format(nameSelect.value)
+                : '';
+            activeWarn.style.display = active ? '' : 'none';
+            introText.textContent = active
+                ? _('Create a named label for %s and its range. The range is added '
+                    + 'to an ACTIVE rule and will be blocked.').format(ip)
+                : _('Create a named label for %s and its range. This makes a '
+                    + 'disabled serverrules rule (label only, no blocking).').format(ip);
+            if (saveBtn)
+                saveBtn.textContent = active ? _('Label and block') : _('Save label');
         }
         nameSelect.addEventListener('change', syncNameField);
         syncNameField();
@@ -299,11 +337,10 @@ return view.extend({
         }).catch(function() {});
 
         ui.showModal(_('Label this server'), [
-            E('p', {}, _('Create a named label for %s and its range. This makes a '
-                + 'disabled serverrules rule (label only, no blocking).').format(ip)),
+            introText,
             E('div', { class: 'cbi-value' }, [
                 E('label', { class: 'cbi-value-title' }, _('Label name')),
-                E('div', { class: 'cbi-value-field' }, [ nameSelect, newNameInput ])
+                E('div', { class: 'cbi-value-field' }, [ nameSelect, newNameInput, activeWarn ])
             ]),
             E('div', { class: 'cbi-value' }, [
                 E('label', { class: 'cbi-value-title' }, _('Range (CIDR)')),
@@ -315,7 +352,7 @@ return view.extend({
             E('div', { class: 'right', style: 'margin-top:12px;' }, [
                 E('button', { class: 'btn', click: ui.hideModal }, _('Cancel')),
                 ' ',
-                E('button', {
+                (saveBtn = E('button', {
                     class: 'btn cbi-button-action',
                     click: function() {
                         var nm = (nameSelect.value === NEW)
@@ -345,9 +382,11 @@ return view.extend({
                             ui.addNotification(null, E('p', _('Label failed: %s').format(e.message || e)), 'error');
                         });
                     }
-                }, _('Save label'))
+                }, _('Save label')))
             ])
         ]);
+        // the button exists now: apply the current selection to its label
+        syncNameField();
     },
 
     refresh: function() {
