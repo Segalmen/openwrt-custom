@@ -2,7 +2,7 @@
 # =============================================================================
 # serverrules.sh — block remote server ranges (IPv4 CIDR), both directions
 # Project : openwrt-custom (Segalmen)
-# Config  : /etc/config/serverrules  (rules with enabled='0' are labels only)
+# Config  : /etc/config/serverrules  (disabled rules are labels only)
 # nft     : table inet serverrules, set "blocked", chain prerouting (-150)
 # The whole table is rebuilt in ONE nft transaction: either the new table
 # replaces the old one, or nothing changes (the previous table stays).
@@ -19,13 +19,22 @@ log() { logger -t serverrules "$*"; }
 
 config_load serverrules
 
+# Global switch, read as an OpenWrt boolean (0/off/false/no/disabled = off;
+# missing section, missing option or unknown value = enabled). A config may
+# hold several global sections (e.g. an empty anonymous one left by a
+# template): any of them set to off disables blocking, whatever their order.
 GLOBAL_ENABLED=1
+GLOBAL_COUNT=0
 read_global() {
     local enabled
-    config_get enabled "$1" enabled 1
-    GLOBAL_ENABLED="$enabled"
+    config_get_bool enabled "$1" enabled 1
+    GLOBAL_COUNT=$((GLOBAL_COUNT + 1))
+    [ "$enabled" = "0" ] && GLOBAL_ENABLED=0
+    return 0
 }
 config_foreach read_global global
+[ "$GLOBAL_COUNT" -gt 1 ] && \
+    log "Multiple global sections found ($GLOBAL_COUNT): any of them set to off disables blocking"
 
 # Globally disabled: remove the table and stop here
 if [ "$GLOBAL_ENABLED" != "1" ]; then
@@ -80,10 +89,12 @@ add_range() {
     COUNT=$((COUNT + 1))
 }
 
+# Rule state, read as an OpenWrt boolean like the global switch: only an
+# off value makes the rule a label; missing or unknown value = blocking.
 load_rule() {
     local enabled
-    config_get enabled "$1" enabled 1
-    [ "$enabled" = "1" ] || return 0
+    config_get_bool enabled "$1" enabled 1
+    [ "$enabled" = "0" ] && return 0
     config_list_foreach "$1" range add_range
 }
 config_foreach load_rule rule
