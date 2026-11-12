@@ -759,7 +759,12 @@ render: function(data) {
                     value: r.sid,
                     selected: (covering && covering.sid === r.sid) ? '' : null
                 }, r.name);
-            }).concat([ E('option', { value: NEW }, '➕ ' + _('New location…')) ])
+            }).concat([ E('option', {
+                value: NEW,
+                // No covering rule: default to a new (disabled) rule, never
+                // to the first existing one, which may be unrelated and active.
+                selected: covering ? null : ''
+            }, '➕ ' + _('New location…')) ])
         );
 
         var cidrInput = E('input', {
@@ -778,8 +783,8 @@ render: function(data) {
             nameRow.style.display = (ruleSelect.value === NEW) ? 'block' : 'none';
         };
         ruleSelect.addEventListener('change', syncNameRow);
-        // No rule yet: "New location" is the only choice, so no change event
-        // ever fires; show the name field from the start.
+        // "New location" is preselected whenever no rule covers the IP, and
+        // no change event fires for a default: show the name field at once.
         syncNameRow();
 
         var hint = covering
