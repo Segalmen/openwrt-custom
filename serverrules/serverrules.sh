@@ -3,7 +3,9 @@
 # serverrules.sh — block remote server ranges (IPv4 CIDR), both directions
 # Project : openwrt-custom (Segalmen)
 # Config  : /etc/config/serverrules  (rules with enabled='0' are labels only)
-# nft     : table inet serverrules, set "blocked", chain prerouting
+# nft     : table inet serverrules, set "blocked", chain prerouting (-150)
+# The whole table is rebuilt in ONE nft transaction: either the new table
+# replaces the old one, or nothing changes (the previous table stays).
 # =============================================================================
 
 . /lib/functions.sh
@@ -11,6 +13,9 @@
 TABLE="serverrules"
 SET="blocked"
 NFT="/usr/sbin/nft"
+MIN_PREFIX=8
+
+log() { logger -t serverrules "$*"; }
 
 config_load serverrules
 
@@ -25,25 +30,34 @@ config_foreach read_global global
 # Globally disabled: remove the table and stop here
 if [ "$GLOBAL_ENABLED" != "1" ]; then
     $NFT delete table inet $TABLE 2>/dev/null
+    log "Blocking globally disabled: table removed"
     exit 0
 fi
 
-# Rebuild the table from scratch (idempotent)
-$NFT delete table inet $TABLE 2>/dev/null
-$NFT -f - <<EOF || { logger -t serverrules "nft table creation failed"; exit 1; }
-table inet $TABLE {
-    set $SET {
-        type ipv4_addr
-        flags interval
-        auto-merge
-    }
-    chain prerouting {
-        type filter hook prerouting priority -150; policy accept;
-        ip daddr @$SET counter drop comment "serverrules: to blocked range"
-        ip saddr @$SET counter drop comment "serverrules: from blocked range"
-    }
+ELEMENTS=""
+COUNT=0
+PFX=""
+
+# parse_range <a.b.c.d[/p]> : strict IPv4 check, sets PFX (32 if absent).
+# Returns 1 on anything else, so nothing unchecked ever reaches nft.
+parse_range() {
+    local ip o
+    case "$1" in
+        */*) ip="${1%/*}"; PFX="${1##*/}" ;;
+        *)   ip="$1"; PFX=32 ;;
+    esac
+    case "$PFX" in ''|*[!0-9]*|0?*|???*) return 1 ;; esac
+    [ "$PFX" -le 32 ] || return 1
+    case "$ip" in ''|*[!0-9.]*|.*|*.|*..*) return 1 ;; esac
+    local IFS=.
+    set -- $ip
+    [ $# -eq 4 ] || return 1
+    for o in "$@"; do
+        case "$o" in 0?*|????*) return 1 ;; esac
+        [ "$o" -le 255 ] || return 1
+    done
+    return 0
 }
-EOF
 
 add_range() {
     # Guard: skip private/reserved ranges (self-ban protection). Mirrors the
@@ -51,11 +65,19 @@ add_range() {
     case "$1" in
         10.*|127.*|0.*|192.168.*|169.254.*|22[4-9].*|2[3-5][0-9].*|\
         172.1[6-9].*|172.2[0-9].*|172.3[01].*)
-            logger -t serverrules "Refused private/reserved range: $1"
+            log "Refused private/reserved range: $1"
             return 0 ;;
     esac
-    $NFT add element inet $TABLE $SET "{ $1 }" 2>/dev/null || \
-        logger -t serverrules "Invalid range skipped: $1"
+    if ! parse_range "$1"; then
+        log "Invalid range skipped: $1"
+        return 0
+    fi
+    if [ "$PFX" -lt "$MIN_PREFIX" ]; then
+        log "Refused range wider than /$MIN_PREFIX: $1"
+        return 0
+    fi
+    ELEMENTS="${ELEMENTS:+$ELEMENTS, }$1"
+    COUNT=$((COUNT + 1))
 }
 
 load_rule() {
@@ -64,6 +86,31 @@ load_rule() {
     [ "$enabled" = "1" ] || return 0
     config_list_foreach "$1" range add_range
 }
-
 config_foreach load_rule rule
+
+# One transaction: "table" makes sure it exists so that "delete" cannot
+# fail, then the table is created again with its full content. Any error
+# aborts the whole transaction and the previous table is left untouched.
+ERR=$({
+    echo "table inet $TABLE"
+    echo "delete table inet $TABLE"
+    echo "table inet $TABLE {"
+    echo "    set $SET {"
+    echo "        type ipv4_addr"
+    echo "        flags interval"
+    echo "        auto-merge"
+    [ -n "$ELEMENTS" ] && echo "        elements = { $ELEMENTS }"
+    echo "    }"
+    echo "    chain prerouting {"
+    echo "        type filter hook prerouting priority -150; policy accept;"
+    echo "        ip daddr @$SET counter drop comment \"serverrules: to blocked range\""
+    echo "        ip saddr @$SET counter drop comment \"serverrules: from blocked range\""
+    echo "    }"
+    echo "}"
+} | $NFT -f - 2>&1) || {
+    log "nft load failed, previous table left unchanged: $ERR"
+    exit 1
+}
+
+log "Loaded $COUNT range(s)"
 exit 0
