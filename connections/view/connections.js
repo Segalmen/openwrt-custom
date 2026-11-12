@@ -261,8 +261,18 @@ function ipInCidr4(ip, cidr) {
     return (addr & mask) >>> 0 === (c.base & mask) >>> 0;
 }
 
+// Is this serverrules rule section ACTIVE (blocking)? Same reading of
+// `enabled` as serverrules.sh (config_get_bool, default on): only an off
+// value disables a rule; a missing or unknown value means active.
+// Used by the rule badge, the Ban / Unban / Enable button and the Label
+// dialog. KEEP IN SYNC with the list in history.js labelTargetIsActive.
+function ruleIsActive(s) {
+    return [ '0', 'off', 'false', 'no', 'disabled' ].indexOf(String(s.enabled)) < 0;
+}
+
 // Find existing serverrules rule whose ranges already cover `ip`.
-// Returns { sid, name } or null. (IPv4 only; v6 bans handled manually for now.)
+// Returns { sid, name, enabled, ranges } or null. (IPv4 only; v6 bans
+// handled manually for now.)
 function findCoveringRule(ip) {
     if (!ip || ip.indexOf(':') >= 0) return null;
     var hit = null;
@@ -271,10 +281,8 @@ function findCoveringRule(ip) {
         var ranges = L.toArray(s.range);
         for (var i = 0; i < ranges.length; i++) {
             if (ipInCidr4(ip, ranges[i])) {
-                // Backend treats missing/'1' as enabled (serverrules.sh L52),
-                // only explicit '0' is disabled. Mirror that here.
                 hit = { sid: s['.name'], name: s.name || s['.name'],
-                        enabled: (s.enabled !== '0' && s.enabled !== 0),
+                        enabled: ruleIsActive(s),
                         ranges: ranges.length };
                 return;
             }
@@ -285,16 +293,13 @@ function findCoveringRule(ip) {
 
 // Is the Server Rules rule that labelServer would extend for `name` ACTIVE?
 // Same lookup as the backend (rule whose name option equals `name`, last
-// match wins) and same reading of `enabled` as serverrules.sh
-// (config_get_bool, default on): only an off value disables a rule; a
-// missing or unknown value means active.
-// KEEP IN SYNC between connections.js and history.js.
+// match wins) and same meaning of "active" as everywhere else in this view
+// (ruleIsActive). KEEP IN SYNC with history.js labelTargetIsActive.
 function labelTargetIsActive(name) {
-    var off = [ '0', 'off', 'false', 'no', 'disabled' ];
     var active = false;
     uci.sections('serverrules', 'rule', function(s) {
         if ((s.name || '') === name)
-            active = (off.indexOf(String(s.enabled)) < 0);
+            active = ruleIsActive(s);
     });
     return active;
 }
