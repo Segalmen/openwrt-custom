@@ -353,7 +353,20 @@ Remote IPv4 ranges grouped in named rules (`/etc/config/serverrules`). An
 enabled rule drops traffic to and from its ranges (nftables table
 `inet serverrules`); a disabled rule is a label only, shown in Connections
 and Server History. **Enable blocking** turns all rules on or off at once.
-Private and reserved ranges are refused, in the page and in the script.
+
+- **Reload** — the table is rebuilt in a single `nft` transaction: on any
+  error the previous table stays in place. Overlapping or adjacent ranges
+  are merged, and the drop counters restart from zero at each reload.
+- **Enable blocking** — section `global`, option `enabled`, an OpenWrt
+  boolean (`0`/`off`/`false`/`no`/`disabled` = off). Blocking is on by
+  default (no section, no option); a single `global` section set to off is
+  enough to disable it, which removes the table. The `enabled` option of a
+  rule is read the same way.
+- **Range checks** — only IPv4 CIDR is accepted (`a.b.c.d/p` or a single
+  address; `a-b` ranges are no longer accepted). Private/reserved ranges,
+  prefixes shorter than `/8` and malformed entries are refused in the
+  pages; in a hand-edited config the script skips and logs them:
+  `logread -e serverrules`.
 
 ### Server History
 
