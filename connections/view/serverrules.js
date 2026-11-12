@@ -65,19 +65,32 @@ return view.extend({
                 (ip[0] === 169 && ip[1] === 254) ||
                 (ip[0] >= 224);
         };
+        // Prefixes shorter than /8 are refused too (range too wide).
+        var isTooWide = function(cidr) {
+            var m = String(cidr || '').trim().match(/\/(\d+)$/);
+            return !!m && +m[1] < 8;
+        };
+        var isRefused = function(cidr) {
+            return isReserved(cidr) || isTooWide(cidr);
+        };
+        var refusalText = function(cidr) {
+            return isReserved(cidr)
+                ? _('Refused: private/reserved range (self-ban protection)')
+                : _('Refused: range too wide, prefix must be /8 or longer');
+        };
         o.validate = function(section_id, value) {
-            var bad = L.toArray(value).filter(isReserved);
+            var bad = L.toArray(value).filter(isRefused);
             if (bad.length)
-                return _('Refused: private/reserved range (self-ban protection)');
+                return refusalText(bad[0]);
             return true;
         };
         o.write = function(section_id, value) {
             var all = L.toArray(value);
-            var kept = all.filter(function(c) { return !isReserved(c); });
+            var kept = all.filter(function(c) { return !isRefused(c); });
             if (kept.length !== all.length)
                 ui.addNotification(null, E('p',
-                    _('Refused and removed: %s (private/reserved range, self-ban protection)')
-                        .format(all.filter(isReserved).join(', '))), 'warning');
+                    _('Refused and removed: %s (private/reserved range or prefix shorter than /8)')
+                        .format(all.filter(isRefused).join(', '))), 'warning');
             if (!kept.length)
                 return this.remove(section_id);
             return form.DynamicList.prototype.write.call(this, section_id, kept);
@@ -87,12 +100,13 @@ return view.extend({
         o.renderWidget = function(section_id, option_index, cfgvalue) {
             var node = form.DynamicList.prototype.renderWidget.call(this,
                 section_id, option_index, cfgvalue);
-            var hint = E('div', { 'style': 'display:none; color:#e0524f; font-weight:bold; margin-top:4px;' },
-                _('Refused: private/reserved range (self-ban protection)'));
+            var hint = E('div', { 'style': 'display:none; color:#e0524f; font-weight:bold; margin-top:4px;' }, '');
             var input = node.querySelector('.add-item > input[type="text"]');
             if (input) {
                 var check = function() {
-                    hint.style.display = isReserved(input.value) ? '' : 'none';
+                    var refused = isRefused(input.value);
+                    hint.textContent = refused ? refusalText(input.value) : '';
+                    hint.style.display = refused ? '' : 'none';
                 };
                 input.addEventListener('input', check);
                 input.addEventListener('keyup', check);
@@ -110,7 +124,7 @@ return view.extend({
             // checked here directly: on LuCI 25.12 the field's own validator
             // only runs the datatype check, not ours
             if (input && input.value.match(/\S/) &&
-                (isReserved(input.value) ||
+                (isRefused(input.value) ||
                  input.classList.contains('cbi-input-invalid')))
                 return false;
             return form.DynamicList.prototype.isValid.call(this, section_id);
@@ -119,8 +133,8 @@ return view.extend({
             var el = this.getUIElement(section_id);
             var input = el && el.node
                 ? el.node.querySelector('.add-item > input[type="text"]') : null;
-            if (input && isReserved(input.value))
-                return _('Refused: private/reserved range (self-ban protection)');
+            if (input && isRefused(input.value))
+                return refusalText(input.value);
             if (input && input.value.match(/\S/))
                 return _('"%s" is not a valid IPv4 range (CIDR).').format(input.value.trim());
             return form.DynamicList.prototype.getValidationError.call(this, section_id);

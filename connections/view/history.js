@@ -42,7 +42,7 @@ function isPublicCidr(cidr) {
     var m = (cidr || '').match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)\/(\d+)$/);
     if (!m) return false;
     var a = +m[1], b = +m[2], pfx = +m[5];
-    if (a > 255 || b > 255 || +m[3] > 255 || +m[4] > 255 || pfx < 1 || pfx > 32) return false;
+    if (a > 255 || b > 255 || +m[3] > 255 || +m[4] > 255 || pfx < 8 || pfx > 32) return false;
     if (a === 10) return false;                          // 10/8
     if (a === 172 && b >= 16 && b <= 31) return false;   // 172.16/12
     if (a === 192 && b === 168) return false;            // 192.168/16
@@ -50,6 +50,13 @@ function isPublicCidr(cidr) {
     if (a === 169 && b === 254) return false;            // link-local
     if (a >= 224) return false;                          // multicast/reserved
     return true;
+}
+
+// True when `cidr` has a valid shape but a prefix shorter than /8 (too wide).
+// KEEP IN SYNC with connections.js cidrTooWide.
+function cidrTooWide(cidr) {
+    var m = (cidr || '').match(/^(\d+)\.(\d+)\.(\d+)\.(\d+)\/(\d+)$/);
+    return !!m && +m[5] < 8;
 }
 
 function fmtTime(ts) {
@@ -317,6 +324,9 @@ return view.extend({
                         var cidr = (cidrInput.value || '').trim();
                         if (!/^[a-zA-Z0-9_]+$/.test(nm)) {
                             errBox.textContent = _('Name required (letters, digits, _).'); return;
+                        }
+                        if (cidrTooWide(cidr)) {
+                            errBox.textContent = _('Range too wide: prefix must be /8 or longer — refused.'); return;
                         }
                         if (!isPublicCidr(cidr)) {
                             errBox.textContent = _('Invalid or private/reserved CIDR — refused.'); return;

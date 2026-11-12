@@ -224,10 +224,24 @@ function parseCidr4(cidr) {
     return { base: base, prefix: p };
 }
 
-// Refuse private/reserved CIDRs (self-ban guard, same families as isPublicIp).
+// Shortest prefix accepted in a ban / label range. Anything wider than /8
+// is refused everywhere (dialogs, Server Rules tab, labelServer backend,
+// serverrules.sh).
+var MIN_CIDR_PREFIX = 8;
+
+// True when `cidr` parses but its prefix is shorter than /8 (too wide).
+// KEEP IN SYNC with history.js cidrTooWide.
+function cidrTooWide(cidr) {
+    var c = parseCidr4(cidr);
+    return !!c && c.prefix < MIN_CIDR_PREFIX;
+}
+
+// Refuse private/reserved CIDRs (self-ban guard, same families as isPublicIp)
+// and prefixes shorter than /8.
 function isPublicCidr(cidr) {
     var c = parseCidr4(cidr);
     if (!c) return false;
+    if (c.prefix < MIN_CIDR_PREFIX) return false;
     var o0 = (c.base >>> 24) & 255, o1 = (c.base >>> 16) & 255;
     return !((o0 === 10) || (o0 === 127) || (o0 === 0) ||
              (o0 === 172 && o1 >= 16 && o1 <= 31) ||
@@ -826,6 +840,10 @@ render: function(data) {
     banConfirm: function(cidrInput, ruleSelect, nameInput, errBox, NEW) {
         var cidr = (cidrInput.value || '').trim();
 
+        if (cidrTooWide(cidr)) {
+            errBox.textContent = _('Range too wide: prefix must be /8 or longer — refused.');
+            return;
+        }
         if (!isPublicCidr(cidr)) {
             errBox.textContent = _('Invalid or private/reserved CIDR — refused.');
             return;
@@ -987,6 +1005,9 @@ render: function(data) {
                         var cidr = (cidrInput.value || '').trim();
                         if (!/^[a-zA-Z0-9_]+$/.test(nm)) {
                             errBox.textContent = _('Name required (letters, digits, _).'); return;
+                        }
+                        if (cidrTooWide(cidr)) {
+                            errBox.textContent = _('Range too wide: prefix must be /8 or longer — refused.'); return;
                         }
                         if (!isPublicCidr(cidr)) {
                             errBox.textContent = _('Invalid or private/reserved CIDR — refused.'); return;
