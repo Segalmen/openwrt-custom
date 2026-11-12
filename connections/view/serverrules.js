@@ -34,6 +34,9 @@ return view.extend({
 
         o = s.option(form.Value, 'name', _('Name'));
         o.placeholder = 'Server_EU';
+        // Mandatory: a rule without a name would only show its generated
+        // section id (cfgXXXXXX) in Connections and Server History.
+        o.rmempty = false;
         // Spaces become _ (same rule as the Ban / Label dialogs)
         o.validate = function(section_id, value) {
             if (!/^[A-Za-z0-9_ ]+$/.test(value || ''))
@@ -111,6 +114,28 @@ return view.extend({
                 input.addEventListener('input', check);
                 input.addEventListener('keyup', check);
                 input.addEventListener('blur', check);
+                // "+" and Enter must not add a refused range to the list.
+                // ui.DynamicList adds on click / keydown handlers bound on
+                // this node (bubble phase) and only skips an input flagged
+                // cbi-input-invalid; these capture-phase guards run first
+                // and do not depend on that flag.
+                var block = function(ev) {
+                    ev.stopPropagation();
+                    ev.preventDefault();
+                    check();
+                };
+                node.addEventListener('click', function(ev) {
+                    if (ev.target && ev.target.classList &&
+                        ev.target.classList.contains('cbi-button-add') &&
+                        isRefused(input.value))
+                        block(ev);
+                }, true);
+                node.addEventListener('keydown', function(ev) {
+                    if (ev.target === input &&
+                        (ev.keyCode === 13 || ev.key === 'Enter') &&
+                        isRefused(input.value))
+                        block(ev);
+                }, true);
             }
             return E('div', {}, [ node, hint ]);
         };
