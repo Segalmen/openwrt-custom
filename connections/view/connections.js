@@ -944,8 +944,11 @@ render: function(data) {
         // (no extra rpc). labelServer expects a NAME, so we key options by name.
         var NEW = '__new__';
         var ruleNames = [];
+        // A rule with no name option in an anonymous section is left out:
+        // labelServer finds its target by name, so picking the generated
+        // section id (cfgXXXXXX) would create a new rule of that name.
         uci.sections('serverrules', 'rule', function(s) {
-            var n = s.name || s['.name'];
+            var n = s.name || (s['.anonymous'] ? '' : s['.name']);
             if (n) ruleNames.push(n);
         });
         var nameSelect = E('select', { class: 'cbi-input-select', style: 'width:100%;' },
