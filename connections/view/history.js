@@ -122,12 +122,18 @@ function ipInCidr4(ip, cidr) {
 // Name of the serverrules rule covering ip today (label or ban), or ''.
 // The region stored at log time stays empty when the server was labelled
 // afterwards; this keeps the Region column current.
+// Same range matching as connections.js findCoveringRule, but a rule with
+// no name option in an anonymous section is skipped: its generated section
+// id (cfgXXXXXX) is not a readable region. The search then goes on, and
+// the stored region stays when no readable rule covers the IP.
 function coveringRuleName(ip) {
     var hit = '';
     uci.sections('serverrules', 'rule', function(s) {
         if (hit) return;
+        var label = s.name || (s['.anonymous'] ? '' : s['.name']);
+        if (!label) return;
         L.toArray(s.range).forEach(function(r) {
-            if (!hit && ipInCidr4(ip, r)) hit = s.name || s['.name'];
+            if (!hit && ipInCidr4(ip, r)) hit = label;
         });
     });
     return hit;
