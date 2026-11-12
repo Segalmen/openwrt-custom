@@ -319,9 +319,10 @@ local methods = {
     },
 
     -- -------------------------------------------------------------------------
-    -- labelServer: create (or extend) a serverrules rule
-    -- used purely as a LABEL. Always enabled='0' (no firewall effect), exactly
-    -- like the user's existing named rules. Single write path shared by the
+    -- labelServer: create (or extend) a serverrules rule.
+    -- A NEW rule is created with enabled='0' (label only, no firewall
+    -- effect). An EXISTING rule of that name is extended as it is: when it
+    -- is active, the added range is blocked. Single write path shared by the
     -- 🏷️ Label buttons in Connections and Server History. suggestCidr only
     -- feeds the caller with a CIDR; the write stays here.
     -- -------------------------------------------------------------------------
@@ -336,9 +337,22 @@ local methods = {
             if not name:match("^[%w_]+$") then
                 return { result = jsonc.stringify({ success = false, error = "invalid name (letters, digits, _)" }) }
             end
-            -- cidr: rough IPv4/CIDR shape; full public/private check is done UI-side
-            if not cidr:match("^%d+%.%d+%.%d+%.%d+/%d+$") then
+            -- cidr: IPv4/CIDR shape, octets <= 255, prefix /8 to /32
+            local o1, o2, o3, o4, pfx = cidr:match("^(%d+)%.(%d+)%.(%d+)%.(%d+)/(%d+)$")
+            o1, o2, o3, o4, pfx = tonumber(o1), tonumber(o2), tonumber(o3), tonumber(o4), tonumber(pfx)
+            if not o1 or o1 > 255 or o2 > 255 or o3 > 255 or o4 > 255 or pfx > 32 then
                 return { result = jsonc.stringify({ success = false, error = "invalid cidr" }) }
+            end
+            if pfx < 8 then
+                return { result = jsonc.stringify({ success = false, error = "invalid cidr: prefix shorter than /8 (range too wide)" }) }
+            end
+            -- Refuse private/reserved ranges (self-ban protection). Same
+            -- families as the UI guards and serverrules.sh; no bitwise ops.
+            if o1 == 10 or o1 == 127 or o1 == 0 or o1 >= 224
+               or (o1 == 172 and o2 >= 16 and o2 <= 31)
+               or (o1 == 192 and o2 == 168)
+               or (o1 == 169 and o2 == 254) then
+                return { result = jsonc.stringify({ success = false, error = "private/reserved range refused" }) }
             end
 
             local x = uci.cursor()
